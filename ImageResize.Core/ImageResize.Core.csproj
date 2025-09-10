@@ -13,6 +13,7 @@
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/YodasMyDad/ImageResize</RepositoryUrl>
         <PackageTags>aspnetcore,image,resize,middleware,cache</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <WarningsNotAsErrors>NU1605</WarningsNotAsErrors>
         <NoWarn>CS1998,CS8604</NoWarn>
     </PropertyGroup>
@@ -26,7 +27,7 @@
         <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.0" />
         <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="3.119.0" />
         <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.9" />
     </ItemGroup>
 
     <ItemGroup>
