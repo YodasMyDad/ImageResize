@@ -4,14 +4,8 @@ using ImageResize.Core.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services
-builder.Services.AddImageResize(o =>
-{
-    // Configure to serve images from the images directory
-    o.ContentRoot = Path.Combine(builder.Environment.WebRootPath ?? "wwwroot", "images");
-    // Configure cache directory
-    o.CacheRoot = Path.Combine(builder.Environment.WebRootPath ?? "wwwroot", "_imgcache");
-});
+// Add services - now with automatic defaults!
+builder.Services.AddImageResize(builder.Environment);
 
 // Add services to the container.
 builder.Services.AddRazorPages();

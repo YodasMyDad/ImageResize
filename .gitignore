@@ -6,3 +6,4 @@ riderModule.iml
 /.idea/*
 /ImageResize.Example/wwwroot/_imgcache/*
 /ImageResize.sln.DotSettings.user
+/nupkgs/*

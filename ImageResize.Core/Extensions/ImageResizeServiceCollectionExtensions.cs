@@ -5,7 +5,9 @@ using ImageResize.Core.Cache;
 using ImageResize.Core.Middleware;
 using ImageResize.Core.Services;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace ImageResize.Core.Extensions;
 
@@ -14,6 +16,27 @@ namespace ImageResize.Core.Extensions;
 /// </summary>
 public static class ImageResizeServiceCollectionExtensions
 {
+    /// <summary>
+    /// Adds ImageResize services to the service collection with default configuration.
+    /// </summary>
+    public static IServiceCollection AddImageResize(this WebApplicationBuilder builder)
+    {
+        return builder.Services.AddImageResize(builder.Environment);
+    }
+
+    /// <summary>
+    /// Adds ImageResize services to the service collection with default configuration.
+    /// </summary>
+    public static IServiceCollection AddImageResize(this IServiceCollection services, IWebHostEnvironment environment)
+    {
+        return services.AddImageResize(options =>
+        {
+            // Set default paths relative to web root
+            options.ContentRoot = Path.Combine(environment.WebRootPath ?? "wwwroot", "images");
+            options.CacheRoot = Path.Combine(environment.WebRootPath ?? "wwwroot", "_imgcache");
+        });
+    }
+
     /// <summary>
     /// Adds ImageResize services to the service collection.
     /// </summary>

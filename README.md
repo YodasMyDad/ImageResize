@@ -1,6 +1,8 @@
 # ImageResize
 
-A minimal, cross-platform image resize middleware for ASP.NET Core that provides a drop-in replacement for common ImageSharp functionality. Built with SkiaSharp for fast, reliable image processing across Windows, Linux, and macOS.
+A minimal, cross-platform image resize middleware for ASP.NET Core that provides a drop-in replacement for some common ImageSharp functionality. Built with SkiaSharp for fast, reliable image processing across Windows, Linux, and macOS.
+
+Note: This is not an ImageSharp replacement. If you need more advanced features then you should use ImageSharp, this is just an OSS alternative for simple image resizing and size reduction on the fly, so I can use it in my own OSS projects. 
 
 ## Features
 
@@ -16,7 +18,7 @@ A minimal, cross-platform image resize middleware for ASP.NET Core that provides
 ## Installation
 
 ```bash
-dotnet add package ImageResize.Core
+dotnet add package ImageResize
 ```
 
 ## Quick Start
@@ -27,19 +29,27 @@ using ImageResize.Core.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddImageResize(o =>
-{
-    o.RequestPathPrefix = "/media";
-    o.ContentRoot = builder.Environment.WebRootPath;
-    o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache");
-});
+// Simple setup with automatic defaults
+builder.Services.AddImageResize(builder.Environment);
 
 var app = builder.Build();
 
-app.UseImageResize(); // Before UseStaticFiles()
+app.UseImageResize(); // Before UseStaticFiles and before routing app.UseRouting() etc...
 app.UseStaticFiles();
 
 app.Run();
+```
+
+### Advanced Configuration (Optional)
+```csharp
+builder.Services.AddImageResize(o =>
+{
+    o.RequestPathPrefix = "/media";
+    o.ContentRoot = Path.Combine(builder.Environment.WebRootPath, "images");
+    o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache");
+    o.AllowUpscale = false;
+    o.DefaultQuality = 85;
+});
 ```
 
 ### Usage Examples
@@ -108,34 +118,6 @@ public class MyController : ControllerBase
 }
 ```
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│ ASP.NET Core Pipeline                           │
-│                                                 │
-│  ┌─────────────────┐      ┌──────────────────┐  │
-│  │ Static Files    │  →   │ ImageResize      │  │
-│  │ (optional)      │      │ Middleware       │  │
-│  └─────────────────┘      └──────────────────┘  │
-│                        │                        │
-│                        ▼                        │
-│               ┌─────────────────┐               │
-│               │ IImageCache     │               │
-│               └─────────────────┘               │
-│                        │                        │
-│                        ▼                        │
-│               ┌─────────────────┐               │
-│               │ IImageResizerSvc│──────────────►│
-│               └─────────────────┘               │  Controllers / Services
-│                        │                        │
-│                        ▼                        │
-│               ┌─────────────────┐               │
-│               │ IImageCodec     │               │
-│               └─────────────────┘               │
-└─────────────────────────────────────────────────┘
-```
-
 ## Cache Design
 
 - **Key generation**: SHA1 hash of normalized path + options + source signature
@@ -161,14 +143,6 @@ public class MyController : ControllerBase
 - **HTTP optimized**: Conditional requests (304) and client caching
 - **Configurable quality**: Balance file size vs. visual quality
 
-## Migration from ImageSharp
-
-This library provides a compatible subset of ImageSharp functionality:
-
-- Same query parameters: `width`, `height`, `quality`
-- Same aspect ratio behavior: "fit" semantics
-- Same supported formats and quality ranges
-- Drop-in middleware replacement
 
 ## Security
 
@@ -183,4 +157,4 @@ MIT
 
 ## Contributing
 
-PRs welcome! See the sample app for usage examples and tests for implementation details.
+PRs welcome! See the Example app for usage examples and tests for implementation details.
