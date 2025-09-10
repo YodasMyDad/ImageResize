@@ -1,3 +1,5 @@
+using ImageResize.Abstractions.Interfaces;
+using ImageResize.Abstractions.Models;
 using ImageResize.Core.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -37,5 +39,37 @@ app.MapStaticAssets();
 
 app.MapRazorPages()
     .WithStaticAssets();
+
+// Demo endpoint showing programmatic usage
+app.MapGet("/demo", async (IImageResizerService svc) =>
+{
+    try
+    {
+        var result = await svc.EnsureResizedAsync(
+            "sample.jpg", // This would be in wwwroot/images/
+            new ResizeOptions(Width: 800, Height: 600, Quality: 80)
+        );
+
+        return Results.File(result.CachedPath, result.ContentType);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest($"Error: {ex.Message}");
+    }
+});
+
+// Info endpoint
+app.MapGet("/info", (IImageResizerService svc) =>
+{
+    return Results.Json(new
+    {
+        Message = "ImageResize middleware is active",
+        Endpoints = new[]
+        {
+            "/media/*?width=800&height=600&quality=80",
+            "/demo - programmatic usage example"
+        }
+    });
+});
 
 app.Run();
