@@ -2,6 +2,7 @@ using ImageResize.Configuration;
 using ImageResize.Interfaces;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace ImageResize.Services;
 
@@ -9,7 +10,7 @@ namespace ImageResize.Services;
 /// Main service for image resizing operations.
 /// </summary>
 public sealed class ImageResizerService(
-    ImageResizeOptions options,
+    IOptions<ImageResizeOptions> options,
     IImageCache cache,
     IImageCodec codec,
     ILogger<ImageResizerService> logger)
@@ -88,10 +89,10 @@ public sealed class ImageResizerService(
     private string ResolveOriginalPath(string relativePath)
     {
         // Security: Prevent path traversal
-        var fullPath = Path.GetFullPath(Path.Combine(options.ContentRoot, relativePath));
+        var fullPath = Path.GetFullPath(Path.Combine(options.Value.ContentRoot, relativePath));
 
         // Ensure the resolved path is within ContentRoot
-        var contentRootFull = Path.GetFullPath(options.ContentRoot);
+        var contentRootFull = Path.GetFullPath(options.Value.ContentRoot);
         if (!fullPath.StartsWith(contentRootFull, StringComparison.OrdinalIgnoreCase))
         {
             throw new UnauthorizedAccessException("Path traversal attempt detected");
@@ -108,7 +109,7 @@ public sealed class ImageResizerService(
 
         var signature = $"{lastWriteTicks}:{length}";
 
-        if (options.HashOriginalContent)
+        if (options.Value.HashOriginalContent)
         {
             await using var stream = File.OpenRead(filePath);
             using var sha1 = System.Security.Cryptography.SHA1.Create();

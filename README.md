@@ -9,10 +9,11 @@ A minimal, cross-platform image resize middleware for .NET Core that provides a 
 - **Querystring-based resizing**: `?width=800&height=600&quality=80`
 - **Aspect ratio preservation**: Always fits within specified dimensions
 - **Multiple formats**: JPEG, PNG, WebP, GIF (first frame), BMP, TIFF (first page)
-- **Disk caching**: Atomic writes with configurable sharding
+- **Disk caching**: Atomic writes with configurable sharding and size management
 - **HTTP caching**: ETags, Last-Modified, Cache-Control headers
 - **Concurrency safe**: Prevents thundering herd with keyed locks
 - **Security**: Path traversal protection and bounds validation
+- **Backend support**: Extensible codec architecture (SkiaSharp, future backends)
 - **OSS-friendly**: MIT licensed with no commercial restrictions
 
 ## Installation
@@ -49,6 +50,10 @@ builder.Services.AddImageResize(o =>
     o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache");
     o.AllowUpscale = false;
     o.DefaultQuality = 85;
+    o.PngCompressionLevel = 6;
+    o.Backend = ImageBackend.SkiaSharp;
+    o.Cache.MaxCacheBytes = 1073741824; // 1GB cache limit
+    o.Cache.PruneOnStartup = true;
 });
 ```
 
@@ -73,21 +78,29 @@ GET /media/photos/cat.jpg?height=1080&quality=85
   "ImageResize": {
     "EnableMiddleware": true,
     "RequestPathPrefix": "/media",
-    "ContentRoot": "wwwroot",
+    "ContentRoot": "wwwroot/images",
     "CacheRoot": "wwwroot/_imgcache",
     "AllowUpscale": false,
     "DefaultQuality": 80,
+    "PngCompressionLevel": 6,
     "Bounds": {
       "MinWidth": 16, "MaxWidth": 4096,
       "MinHeight": 16, "MaxHeight": 4096,
       "MinQuality": 10, "MaxQuality": 95
     },
+    "HashOriginalContent": false,
     "Cache": {
-      "FolderSharding": 2
+      "FolderSharding": 2,
+      "PruneOnStartup": false,
+      "MaxCacheBytes": 0
     },
     "ResponseCache": {
-      "ClientCacheSeconds": 604800
-    }
+      "ClientCacheSeconds": 604800,
+      "SendETag": true,
+      "SendLastModified": true
+    },
+    "AllowedExtensions": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"],
+    "Backend": "SkiaSharp"
   }
 }
 ```
@@ -124,17 +137,29 @@ public class MyController : ControllerBase
 - **Source signature**: Last modified time + file size (+ optional content hash)
 - **Atomic writes**: Temp file → rename for consistency
 - **Folder sharding**: Configurable subfolder splitting (e.g., `ab/cd/hash.ext`)
+- **Size management**: Automatic cleanup when `MaxCacheBytes` exceeded
+- **Startup pruning**: Optional cleanup of old files on application startup
 
 ## Supported Formats
 
 | Format | Read | Write | Notes |
 |--------|------|-------|-------|
 | JPEG   | ✅   | ✅    | Quality 1-100 |
-| PNG    | ✅   | ✅    | Compression level mapping |
+| PNG    | ✅   | ✅    | Compression level 0-9 (configurable) |
 | WebP   | ✅   | ✅    | Quality 1-100 |
 | GIF    | ✅   | ✅    | First frame only |
 | BMP    | ✅   | ✅    | |
 | TIFF   | ✅   | ✅    | First page only |
+
+## Backend Support
+
+Currently supports SkiaSharp backend with framework for additional backends:
+
+- **SkiaSharp**: Cross-platform, high-performance (default)
+- **SystemDrawing**: Windows-only, .NET Framework compatible (planned)
+- **MagickNet**: ImageMagick integration (planned)
+
+Configure via `Backend` setting in appsettings.json.
 
 ## Performance
 
@@ -142,6 +167,8 @@ public class MyController : ControllerBase
 - **Concurrent safe**: Keyed locks prevent duplicate processing
 - **HTTP optimized**: Conditional requests (304) and client caching
 - **Configurable quality**: Balance file size vs. visual quality
+- **Smart caching**: Automatic cache size management and startup pruning
+- **Backend flexibility**: Choose optimal codec for your platform
 
 
 ## Security

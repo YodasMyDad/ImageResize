@@ -3,6 +3,7 @@ using ImageResize.Interfaces;
 using ImageResize.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 
 namespace ImageResize.Middleware;
@@ -12,19 +13,19 @@ namespace ImageResize.Middleware;
 /// </summary>
 public sealed class ImageResizeMiddleware(
     RequestDelegate next,
-    ImageResizeOptions opts,
+    IOptions<ImageResizeOptions> opts,
     IImageResizerService svc,
     ILogger<ImageResizeMiddleware> log)
 {
     public async Task InvokeAsync(HttpContext ctx)
     {
-        if (!opts.EnableMiddleware)
+        if (!opts.Value.EnableMiddleware)
         {
             await next(ctx);
             return;
         }
 
-        if (!ctx.Request.Path.StartsWithSegments(opts.RequestPathPrefix, out var remainder))
+        if (!ctx.Request.Path.StartsWithSegments(opts.Value.RequestPathPrefix, out var remainder))
         {
             await next(ctx);
             return;
@@ -39,7 +40,7 @@ public sealed class ImageResizeMiddleware(
 
         // Check allowed extensions
         var ext = Path.GetExtension(relPath).ToLowerInvariant();
-        if (!opts.AllowedExtensions.Contains(ext))
+        if (!opts.Value.AllowedExtensions.Contains(ext))
         {
             await next(ctx);
             return;
@@ -116,21 +117,21 @@ public sealed class ImageResizeMiddleware(
 
     private bool ValidateBounds(int? width, int? height, int? quality, out string? problem)
     {
-        if (width.HasValue && (width < opts.Bounds.MinWidth || width > opts.Bounds.MaxWidth))
+        if (width.HasValue && (width < opts.Value.Bounds.MinWidth || width > opts.Value.Bounds.MaxWidth))
         {
-            problem = $"width must be between {opts.Bounds.MinWidth} and {opts.Bounds.MaxWidth}";
+            problem = $"width must be between {opts.Value.Bounds.MinWidth} and {opts.Value.Bounds.MaxWidth}";
             return false;
         }
 
-        if (height.HasValue && (height < opts.Bounds.MinHeight || height > opts.Bounds.MaxHeight))
+        if (height.HasValue && (height < opts.Value.Bounds.MinHeight || height > opts.Value.Bounds.MaxHeight))
         {
-            problem = $"height must be between {opts.Bounds.MinHeight} and {opts.Bounds.MaxHeight}";
+            problem = $"height must be between {opts.Value.Bounds.MinHeight} and {opts.Value.Bounds.MaxHeight}";
             return false;
         }
 
-        if (quality.HasValue && (quality < opts.Bounds.MinQuality || quality > opts.Bounds.MaxQuality))
+        if (quality.HasValue && (quality < opts.Value.Bounds.MinQuality || quality > opts.Value.Bounds.MaxQuality))
         {
-            problem = $"quality must be between {opts.Bounds.MinQuality} and {opts.Bounds.MaxQuality}";
+            problem = $"quality must be between {opts.Value.Bounds.MinQuality} and {opts.Value.Bounds.MaxQuality}";
             return false;
         }
 
@@ -162,17 +163,17 @@ public sealed class ImageResizeMiddleware(
 
     private void ApplyCacheHeaders(HttpResponse response, string filePath)
     {
-        if (opts.ResponseCache.SendETag)
+        if (opts.Value.ResponseCache.SendETag)
         {
             response.Headers["ETag"] = GenerateETag(filePath);
         }
 
-        if (opts.ResponseCache.SendLastModified)
+        if (opts.Value.ResponseCache.SendLastModified)
         {
             response.Headers["Last-Modified"] = File.GetLastWriteTimeUtc(filePath).ToString("R");
         }
 
-        response.Headers["Cache-Control"] = $"public, max-age={opts.ResponseCache.ClientCacheSeconds}";
+        response.Headers["Cache-Control"] = $"public, max-age={opts.Value.ResponseCache.ClientCacheSeconds}";
         response.Headers["Vary"] = "width, height, quality";
     }
 }

@@ -2,6 +2,7 @@ using ImageResize.Cache;
 using ImageResize.Configuration;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using NUnit.Framework;
 using Shouldly;
@@ -15,6 +16,7 @@ namespace ImageResize.Tests;
 public class CacheTests
 {
     private ImageResizeOptions _options = null!;
+    private Mock<IOptions<ImageResizeOptions>> _optionsMock = null!;
     private Mock<ILogger<FileSystemImageCache>> _logger = null!;
     private FileSystemImageCache _cache = null!;
 
@@ -29,8 +31,11 @@ public class CacheTests
             Cache = new ImageResizeOptions.CacheOptions { FolderSharding = 2 }
         };
 
+        _optionsMock = new Mock<IOptions<ImageResizeOptions>>();
+        _optionsMock.Setup(x => x.Value).Returns(_options);
+
         _logger = new Mock<ILogger<FileSystemImageCache>>();
-        _cache = new FileSystemImageCache(_options, _logger.Object);
+        _cache = new FileSystemImageCache(_optionsMock.Object, _logger.Object);
     }
 
     [Test]

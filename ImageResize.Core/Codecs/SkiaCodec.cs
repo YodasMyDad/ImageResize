@@ -2,6 +2,7 @@ using ImageResize.Configuration;
 using ImageResize.Interfaces;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using SkiaSharp;
 
 namespace ImageResize.Codecs;
@@ -9,7 +10,7 @@ namespace ImageResize.Codecs;
 /// <summary>
 /// SkiaSharp-based image codec implementation.
 /// </summary>
-public sealed class SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> logger) : IImageCodec
+public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<SkiaCodec> logger) : IImageCodec
 {
     /// <inheritdoc />
     public async Task<(int Width, int Height, string ContentType)> ProbeAsync(Stream input, CancellationToken ct)
@@ -40,7 +41,7 @@ public sealed class SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> log
             throw new InvalidOperationException("Unable to decode image");
 
         var info = codec.Info;
-        var (outW, outH) = Fit(info.Width, info.Height, options1.Width, options1.Height, options.AllowUpscale);
+        var (outW, outH) = Fit(info.Width, info.Height, options1.Width, options1.Height, options.Value.AllowUpscale);
 
         // Reset stream position after codec creation
         ms.Position = 0;
@@ -57,7 +58,7 @@ public sealed class SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> log
         var fmt = codec.EncodedFormat; // Keep original format
 
         var outStream = new MemoryStream();
-        var quality = options1.Quality ?? options.DefaultQuality;
+        var quality = options1.Quality ?? options.Value.DefaultQuality;
 
         switch (fmt)
         {
@@ -68,8 +69,7 @@ public sealed class SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> log
                 image.Encode(SKEncodedImageFormat.Webp, quality).SaveTo(outStream);
                 break;
             case SKEncodedImageFormat.Png:
-                var level = MapQualityToPngLevel(quality);
-                image.Encode(SKEncodedImageFormat.Png, level).SaveTo(outStream);
+                image.Encode(SKEncodedImageFormat.Png, options.Value.PngCompressionLevel).SaveTo(outStream);
                 break;
             default:
                 image.Encode(fmt, quality).SaveTo(outStream);
@@ -109,11 +109,6 @@ public sealed class SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> log
         return (outW, outH);
     }
 
-    private static int MapQualityToPngLevel(int quality)
-    {
-        // Map 1..100 quality to 0..9 compression (simple linear mapping)
-        return Math.Clamp((100 - quality) / 11, 0, 9);
-    }
 
     private static string MimeFromEncodedFormat(SKEncodedImageFormat format) => format switch
     {
