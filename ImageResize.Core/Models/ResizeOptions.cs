@@ -1,4 +1,4 @@
-namespace ImageResize.Abstractions.Models;
+namespace ImageResize.Models;
 
 /// <summary>
 /// Options for image resizing operations.

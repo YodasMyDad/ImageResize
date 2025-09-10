@@ -1,4 +1,3 @@
-using ImageResize.Codecs.Skia;
 using NUnit.Framework;
 using Shouldly;
 

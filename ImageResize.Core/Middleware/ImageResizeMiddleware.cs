@@ -1,11 +1,11 @@
-using ImageResize.Abstractions.Configuration;
-using ImageResize.Abstractions.Interfaces;
-using ImageResize.Abstractions.Models;
+using ImageResize.Configuration;
+using ImageResize.Interfaces;
+using ImageResize.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
 
-namespace ImageResize.Core.Middleware;
+namespace ImageResize.Middleware;
 
 /// <summary>
 /// Middleware for handling image resize requests.

@@ -1,9 +1,9 @@
-using ImageResize.Abstractions.Configuration;
-using ImageResize.Abstractions.Interfaces;
-using ImageResize.Codecs.Skia;
-using ImageResize.Core.Cache;
-using ImageResize.Core.Middleware;
-using ImageResize.Core.Services;
+using ImageResize.Configuration;
+using ImageResize.Interfaces;
+using ImageResize.Codecs;
+using ImageResize.Cache;
+using ImageResize.Middleware;
+using ImageResize.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;

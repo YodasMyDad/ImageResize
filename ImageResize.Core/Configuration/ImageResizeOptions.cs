@@ -1,4 +1,4 @@
-namespace ImageResize.Abstractions.Configuration;
+namespace ImageResize.Configuration;
 
 /// <summary>
 /// Configuration options for ImageResize middleware.

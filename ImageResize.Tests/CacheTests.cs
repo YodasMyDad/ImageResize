@@ -1,6 +1,6 @@
-using ImageResize.Abstractions.Configuration;
-using ImageResize.Abstractions.Models;
-using ImageResize.Core.Cache;
+using ImageResize.Cache;
+using ImageResize.Configuration;
+using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Moq;
 using NUnit.Framework;

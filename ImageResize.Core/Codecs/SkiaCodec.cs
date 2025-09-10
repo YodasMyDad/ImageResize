@@ -1,10 +1,10 @@
-using ImageResize.Abstractions.Configuration;
-using ImageResize.Abstractions.Interfaces;
-using ImageResize.Abstractions.Models;
+using ImageResize.Configuration;
+using ImageResize.Interfaces;
+using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using SkiaSharp;
 
-namespace ImageResize.Codecs.Skia;
+namespace ImageResize.Codecs;
 
 /// <summary>
 /// SkiaSharp-based image codec implementation.

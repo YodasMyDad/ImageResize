@@ -1,6 +1,6 @@
-using ImageResize.Abstractions.Models;
+using ImageResize.Models;
 
-namespace ImageResize.Abstractions.Interfaces;
+namespace ImageResize.Interfaces;
 
 /// <summary>
 /// Service for resizing images with caching.

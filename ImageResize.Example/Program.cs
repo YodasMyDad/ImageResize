@@ -1,6 +1,6 @@
-using ImageResize.Abstractions.Interfaces;
-using ImageResize.Abstractions.Models;
 using ImageResize.Core.Extensions;
+using ImageResize.Interfaces;
+using ImageResize.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
