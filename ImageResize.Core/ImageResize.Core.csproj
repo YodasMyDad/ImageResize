@@ -11,8 +11,9 @@
         <Authors>Lee Messenger</Authors>
         <Description>Minimal, cross-platform image resize middleware for ASP.NET Core</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <RepositoryUrl>https://github.com/your-org/ImageResize</RepositoryUrl>
+        <RepositoryUrl>https://github.com/YodasMyDad/ImageResize</RepositoryUrl>
         <PackageTags>aspnetcore,image,resize,middleware,cache</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <WarningsNotAsErrors>NU1605</WarningsNotAsErrors>
         <NoWarn>CS1998,CS8604</NoWarn>
     </PropertyGroup>
@@ -24,6 +25,10 @@
     <ItemGroup>
         <ProjectReference Include="..\ImageResize.Abstractions\ImageResize.Abstractions.csproj" />
         <ProjectReference Include="..\ImageResize.Codecs.Skia\ImageResize.Codecs.Skia.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 
 </Project>

@@ -1,0 +1,5 @@
+# Step 1: Build first (creates the DLLs)
+dotnet build ImageResize.Core/ImageResize.Core.csproj -c Release
+
+# Step 2: Then pack (creates the NuGet package)
+dotnet pack ImageResize.Core/ImageResize.Core.csproj -c Release --output nupkgs
