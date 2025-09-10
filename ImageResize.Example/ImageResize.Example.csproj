@@ -8,6 +8,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\ImageResize.Core\ImageResize.Core.csproj" />
+        <!--<PackageReference Include="ImageResize" Version="1.0.0-beta" />-->
     </ItemGroup>
 
 </Project>

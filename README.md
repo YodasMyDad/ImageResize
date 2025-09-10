@@ -1,8 +1,8 @@
 # ImageResize
 
-A minimal, cross-platform image resize middleware for ASP.NET Core that provides a drop-in replacement for some common ImageSharp functionality. Built with SkiaSharp for fast, reliable image processing across Windows, Linux, and macOS.
+A minimal, cross-platform image resize middleware for .NET Core that provides a drop-in replacement for some common ImageSharp functionality. Built with SkiaSharp for fast, reliable image processing across Windows, Linux, and macOS.
 
-Note: This is not an ImageSharp replacement. If you need more advanced features then you should use ImageSharp, this is just an OSS alternative for simple image resizing and size reduction on the fly, so I can use it in my own OSS projects. 
+**Important:** Make no mistake, this is not a full replacement for ImageSharp and I'm sure it's faster/better than this. This is a 'vibe' coded project I did with cursor to test the new grok code fast model, and I haven't tested it extensively. I have only tested it my own projects and the Example project within this solution - So any help or bugs, please free to do a PR.
 
 ## Features
 
