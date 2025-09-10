@@ -10,51 +10,38 @@ namespace ImageResize.Core.Middleware;
 /// <summary>
 /// Middleware for handling image resize requests.
 /// </summary>
-public sealed class ImageResizeMiddleware
+public sealed class ImageResizeMiddleware(
+    RequestDelegate next,
+    ImageResizeOptions opts,
+    IImageResizerService svc,
+    ILogger<ImageResizeMiddleware> log)
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<ImageResizeMiddleware> _log;
-    private readonly ImageResizeOptions _opts;
-    private readonly IImageResizerService _svc;
-
-    public ImageResizeMiddleware(
-        RequestDelegate next,
-        ImageResizeOptions opts,
-        IImageResizerService svc,
-        ILogger<ImageResizeMiddleware> log)
-    {
-        _next = next;
-        _opts = opts;
-        _svc = svc;
-        _log = log;
-    }
-
     public async Task InvokeAsync(HttpContext ctx)
     {
-        if (!_opts.EnableMiddleware)
+        if (!opts.EnableMiddleware)
         {
-            await _next(ctx);
+            await next(ctx);
             return;
         }
 
-        if (!ctx.Request.Path.StartsWithSegments(_opts.RequestPathPrefix, out var remainder))
+        if (!ctx.Request.Path.StartsWithSegments(opts.RequestPathPrefix, out var remainder))
         {
-            await _next(ctx);
+            await next(ctx);
             return;
         }
 
-        var relPath = remainder.Value.TrimStart('/');
+        var relPath = remainder.Value?.TrimStart('/');
         if (string.IsNullOrEmpty(relPath))
         {
-            await _next(ctx);
+            await next(ctx);
             return;
         }
 
         // Check allowed extensions
         var ext = Path.GetExtension(relPath).ToLowerInvariant();
-        if (!_opts.AllowedExtensions.Contains(ext))
+        if (!opts.AllowedExtensions.Contains(ext))
         {
-            await _next(ctx);
+            await next(ctx);
             return;
         }
 
@@ -65,14 +52,14 @@ public sealed class ImageResizeMiddleware
 
         if (w is null && h is null)
         {
-            await _next(ctx);
+            await next(ctx);
             return;
         }
 
         // Validate bounds
         if (!ValidateBounds(w, h, q, out var problem))
         {
-            _log.LogWarning("Invalid resize parameters for {Path}: {Problem}", relPath, problem);
+            log.LogWarning("Invalid resize parameters for {Path}: {Problem}", relPath, problem);
             ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
             await ctx.Response.WriteAsync(problem!);
             return;
@@ -82,7 +69,7 @@ public sealed class ImageResizeMiddleware
 
         try
         {
-            var result = await _svc.EnsureResizedAsync(relPath, options, ctx.RequestAborted);
+            var result = await svc.EnsureResizedAsync(relPath, options, ctx.RequestAborted);
 
             // Handle conditional requests
             if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
@@ -109,7 +96,7 @@ public sealed class ImageResizeMiddleware
             ctx.Response.ContentLength = fs.Length;
             await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
 
-            _log.LogDebug("Served resized image {Path} ({Size} bytes)", result.CachedPath, fs.Length);
+            log.LogDebug("Served resized image {Path} ({Size} bytes)", result.CachedPath, fs.Length);
         }
         catch (FileNotFoundException)
         {
@@ -117,7 +104,7 @@ public sealed class ImageResizeMiddleware
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "Error resizing image {Path}", relPath);
+            log.LogError(ex, "Error resizing image {Path}", relPath);
             ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
         }
     }
@@ -129,21 +116,21 @@ public sealed class ImageResizeMiddleware
 
     private bool ValidateBounds(int? width, int? height, int? quality, out string? problem)
     {
-        if (width.HasValue && (width < _opts.Bounds.MinWidth || width > _opts.Bounds.MaxWidth))
+        if (width.HasValue && (width < opts.Bounds.MinWidth || width > opts.Bounds.MaxWidth))
         {
-            problem = $"width must be between {_opts.Bounds.MinWidth} and {_opts.Bounds.MaxWidth}";
+            problem = $"width must be between {opts.Bounds.MinWidth} and {opts.Bounds.MaxWidth}";
             return false;
         }
 
-        if (height.HasValue && (height < _opts.Bounds.MinHeight || height > _opts.Bounds.MaxHeight))
+        if (height.HasValue && (height < opts.Bounds.MinHeight || height > opts.Bounds.MaxHeight))
         {
-            problem = $"height must be between {_opts.Bounds.MinHeight} and {_opts.Bounds.MaxHeight}";
+            problem = $"height must be between {opts.Bounds.MinHeight} and {opts.Bounds.MaxHeight}";
             return false;
         }
 
-        if (quality.HasValue && (quality < _opts.Bounds.MinQuality || quality > _opts.Bounds.MaxQuality))
+        if (quality.HasValue && (quality < opts.Bounds.MinQuality || quality > opts.Bounds.MaxQuality))
         {
-            problem = $"quality must be between {_opts.Bounds.MinQuality} and {_opts.Bounds.MaxQuality}";
+            problem = $"quality must be between {opts.Bounds.MinQuality} and {opts.Bounds.MaxQuality}";
             return false;
         }
 
@@ -175,17 +162,17 @@ public sealed class ImageResizeMiddleware
 
     private void ApplyCacheHeaders(HttpResponse response, string filePath)
     {
-        if (_opts.ResponseCache.SendETag)
+        if (opts.ResponseCache.SendETag)
         {
             response.Headers["ETag"] = GenerateETag(filePath);
         }
 
-        if (_opts.ResponseCache.SendLastModified)
+        if (opts.ResponseCache.SendLastModified)
         {
             response.Headers["Last-Modified"] = File.GetLastWriteTimeUtc(filePath).ToString("R");
         }
 
-        response.Headers["Cache-Control"] = $"public, max-age={_opts.ResponseCache.ClientCacheSeconds}";
+        response.Headers["Cache-Control"] = $"public, max-age={opts.ResponseCache.ClientCacheSeconds}";
         response.Headers["Vary"] = "width, height, quality";
     }
 }

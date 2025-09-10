@@ -8,26 +8,14 @@ namespace ImageResize.Core.Services;
 /// <summary>
 /// Main service for image resizing operations.
 /// </summary>
-public sealed class ImageResizerService : IImageResizerService
+public sealed class ImageResizerService(
+    ImageResizeOptions options,
+    IImageCache cache,
+    IImageCodec codec,
+    ILogger<ImageResizerService> logger)
+    : IImageResizerService
 {
-    private readonly ImageResizeOptions _options;
-    private readonly IImageCache _cache;
-    private readonly IImageCodec _codec;
-    private readonly ILogger<ImageResizerService> _logger;
-    private readonly AsyncKeyedLocker _locker;
-
-    public ImageResizerService(
-        ImageResizeOptions options,
-        IImageCache cache,
-        IImageCodec codec,
-        ILogger<ImageResizerService> logger)
-    {
-        _options = options;
-        _cache = cache;
-        _codec = codec;
-        _logger = logger;
-        _locker = new AsyncKeyedLocker();
-    }
+    private readonly AsyncKeyedLocker _locker = new();
 
     /// <inheritdoc />
     public async Task<ResizeResult> EnsureResizedAsync(string relativePath, ResizeOptions options, CancellationToken ct = default)
@@ -43,15 +31,15 @@ public sealed class ImageResizerService : IImageResizerService
         var sourceSignature = await GenerateSourceSignatureAsync(originalPath, ct);
 
         // Get cache path
-        var cachedPath = _cache.GetCachedFilePath(relativePath, options, sourceSignature);
+        var cachedPath = cache.GetCachedFilePath(relativePath, options, sourceSignature);
 
         // Use keyed lock to prevent thundering herd
         await using var lockHandle = await _locker.LockAsync(cachedPath, ct);
 
         // Check cache first
-        if (await _cache.ExistsAsync(cachedPath, ct))
+        if (await cache.ExistsAsync(cachedPath, ct))
         {
-            _logger.LogDebug("Cache hit for {Path}", cachedPath);
+            logger.LogDebug("Cache hit for {Path}", cachedPath);
             var fileInfo = new FileInfo(cachedPath);
             return new ResizeResult(
                 OriginalPath: originalPath,
@@ -63,18 +51,18 @@ public sealed class ImageResizerService : IImageResizerService
             );
         }
 
-        _logger.LogDebug("Cache miss for {Path}, resizing...", cachedPath);
+        logger.LogDebug("Cache miss for {Path}, resizing...", cachedPath);
 
         // Load and resize original
         await using var originalStream = File.OpenRead(originalPath);
-        var (resizedStream, contentType, outW, outH) = await _codec.ResizeAsync(
+        var (resizedStream, contentType, outW, outH) = await codec.ResizeAsync(
             originalStream, null, options, ct);
 
         // Write to cache
-        await _cache.WriteAtomicallyAsync(cachedPath, resizedStream, ct);
+        await cache.WriteAtomicallyAsync(cachedPath, resizedStream, ct);
 
         var bytesWritten = resizedStream.Length;
-        _logger.LogInformation("Resized {Original} to {Cached} ({Width}x{Height}, {Bytes} bytes)",
+        logger.LogInformation("Resized {Original} to {Cached} ({Width}x{Height}, {Bytes} bytes)",
             originalPath, cachedPath, outW, outH, bytesWritten);
 
         return new ResizeResult(
@@ -94,16 +82,16 @@ public sealed class ImageResizerService : IImageResizerService
         ResizeOptions options,
         CancellationToken ct = default)
     {
-        return await _codec.ResizeAsync(original, originalContentType, options, ct);
+        return await codec.ResizeAsync(original, originalContentType, options, ct);
     }
 
     private string ResolveOriginalPath(string relativePath)
     {
         // Security: Prevent path traversal
-        var fullPath = Path.GetFullPath(Path.Combine(_options.ContentRoot, relativePath));
+        var fullPath = Path.GetFullPath(Path.Combine(options.ContentRoot, relativePath));
 
         // Ensure the resolved path is within ContentRoot
-        var contentRootFull = Path.GetFullPath(_options.ContentRoot);
+        var contentRootFull = Path.GetFullPath(options.ContentRoot);
         if (!fullPath.StartsWith(contentRootFull, StringComparison.OrdinalIgnoreCase))
         {
             throw new UnauthorizedAccessException("Path traversal attempt detected");
@@ -120,7 +108,7 @@ public sealed class ImageResizerService : IImageResizerService
 
         var signature = $"{lastWriteTicks}:{length}";
 
-        if (_options.HashOriginalContent)
+        if (options.HashOriginalContent)
         {
             await using var stream = File.OpenRead(filePath);
             using var sha1 = System.Security.Cryptography.SHA1.Create();

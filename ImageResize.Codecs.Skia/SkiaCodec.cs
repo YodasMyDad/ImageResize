@@ -9,17 +9,8 @@ namespace ImageResize.Codecs.Skia;
 /// <summary>
 /// SkiaSharp-based image codec implementation.
 /// </summary>
-public sealed class SkiaCodec : IImageCodec
+public sealed class SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> logger) : IImageCodec
 {
-    private readonly ImageResizeOptions _options;
-    private readonly ILogger<SkiaCodec> _logger;
-
-    public SkiaCodec(ImageResizeOptions options, ILogger<SkiaCodec> logger)
-    {
-        _options = options;
-        _logger = logger;
-    }
-
     /// <inheritdoc />
     public async Task<(int Width, int Height, string ContentType)> ProbeAsync(Stream input, CancellationToken ct)
     {
@@ -39,7 +30,7 @@ public sealed class SkiaCodec : IImageCodec
     public async Task<(Stream Output, string ContentType, int OutW, int OutH)> ResizeAsync(
         Stream input,
         string? originalContentType,
-        ResizeOptions options,
+        ResizeOptions options1,
         CancellationToken ct)
     {
         using var ms = await CopyToMemoryStream(input, ct);
@@ -49,7 +40,7 @@ public sealed class SkiaCodec : IImageCodec
             throw new InvalidOperationException("Unable to decode image");
 
         var info = codec.Info;
-        var (outW, outH) = Fit(info.Width, info.Height, options.Width, options.Height, _options.AllowUpscale);
+        var (outW, outH) = Fit(info.Width, info.Height, options1.Width, options1.Height, options.AllowUpscale);
 
         // Reset stream position after codec creation
         ms.Position = 0;
@@ -66,7 +57,7 @@ public sealed class SkiaCodec : IImageCodec
         var fmt = codec.EncodedFormat; // Keep original format
 
         var outStream = new MemoryStream();
-        var quality = options.Quality ?? _options.DefaultQuality;
+        var quality = options1.Quality ?? options.DefaultQuality;
 
         switch (fmt)
         {
@@ -88,7 +79,7 @@ public sealed class SkiaCodec : IImageCodec
         outStream.Position = 0;
         var mime = MimeFromEncodedFormat(fmt);
 
-        _logger.LogDebug("Resized image from {SrcW}x{SrcH} to {OutW}x{OutH}, format: {Format}",
+        logger.LogDebug("Resized image from {SrcW}x{SrcH} to {OutW}x{OutH}, format: {Format}",
             info.Width, info.Height, outW, outH, fmt);
 
         return (outStream, mime, outW, outH);

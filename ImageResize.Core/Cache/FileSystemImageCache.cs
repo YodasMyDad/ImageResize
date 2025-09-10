@@ -8,32 +8,24 @@ namespace ImageResize.Core.Cache;
 /// <summary>
 /// File system-based image cache with atomic writes and folder sharding.
 /// </summary>
-public sealed class FileSystemImageCache : IImageCache
+public sealed class FileSystemImageCache(ImageResizeOptions options, ILogger<FileSystemImageCache> logger)
+    : IImageCache
 {
-    private readonly ImageResizeOptions _options;
-    private readonly ILogger<FileSystemImageCache> _logger;
-
-    public FileSystemImageCache(ImageResizeOptions options, ILogger<FileSystemImageCache> logger)
-    {
-        _options = options;
-        _logger = logger;
-    }
-
     /// <inheritdoc />
-    public string GetCachedFilePath(string relPath, ResizeOptions options, string sourceSignature)
+    public string GetCachedFilePath(string relPath, ResizeOptions options1, string sourceSignature)
     {
-        var cacheKey = GenerateCacheKey(relPath, options, sourceSignature);
+        var cacheKey = GenerateCacheKey(relPath, options1, sourceSignature);
         var shardedPath = GetShardedPath(cacheKey);
         var extension = Path.GetExtension(relPath).ToLowerInvariant();
 
-        return Path.Combine(_options.CacheRoot, shardedPath + extension);
+        return Path.Combine(options.CacheRoot, shardedPath + extension);
     }
 
     /// <inheritdoc />
     public async Task<bool> ExistsAsync(string cachedPath, CancellationToken ct = default)
     {
         var exists = File.Exists(cachedPath);
-        _logger.LogDebug("Cache file {Path} exists: {Exists}", cachedPath, exists);
+        logger.LogDebug("Cache file {Path} exists: {Exists}", cachedPath, exists);
         return exists;
     }
 
@@ -72,10 +64,10 @@ public sealed class FileSystemImageCache : IImageCache
         // Atomic move/rename
         File.Move(tempPath, cachedPath, overwrite: true);
 
-        _logger.LogDebug("Atomically wrote cache file {Path}", cachedPath);
+        logger.LogDebug("Atomically wrote cache file {Path}", cachedPath);
     }
 
-    private string GenerateCacheKey(string relPath, ResizeOptions options, string sourceSignature)
+    private string GenerateCacheKey(string relPath, ResizeOptions options1, string sourceSignature)
     {
         // Normalize path for consistent keying
         var normalizedPath = Path.GetFullPath(relPath)
@@ -83,7 +75,7 @@ public sealed class FileSystemImageCache : IImageCache
             .ToLowerInvariant()
             .TrimStart('/');
 
-        var optionsPart = $"w={options.Width ?? 0},h={options.Height ?? 0},q={options.Quality ?? _options.DefaultQuality},up={_options.AllowUpscale}";
+        var optionsPart = $"w={options1.Width ?? 0},h={options1.Height ?? 0},q={options1.Quality ?? options.DefaultQuality},up={options.AllowUpscale}";
         var keyInput = $"{normalizedPath}|{optionsPart}|{sourceSignature}";
 
         using var sha1 = System.Security.Cryptography.SHA1.Create();
@@ -95,10 +87,10 @@ public sealed class FileSystemImageCache : IImageCache
 
     private string GetShardedPath(string cacheKey)
     {
-        if (_options.Cache.FolderSharding <= 0)
+        if (options.Cache.FolderSharding <= 0)
             return cacheKey;
 
-        var sharding = _options.Cache.FolderSharding * 2; // 2 chars per level
+        var sharding = options.Cache.FolderSharding * 2; // 2 chars per level
         if (cacheKey.Length < sharding)
             return cacheKey;
 
