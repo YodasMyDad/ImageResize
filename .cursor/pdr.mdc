@@ -1,0 +1,619 @@
+---
+alwaysApply: true
+---
+
+# PDR — Minimal, Cross-Platform Image Resize Middleware for .NET 9
+
+**Goal:** Deliver a small, dependency-light NuGet package that can be dropped into ASP.NET Core apps to replace the *subset* of ImageSharp functionality most teams actually need: resizing by `width`, `height`, and `quality`, with caching. It should run as middleware, expose services for programmatic use, and work on Linux without any commercial or restrictive licensing.
+
+------
+
+## 1) Product scope
+
+### In scope
+
+- Resize by querystring: `?width=…&height=…&quality=…`
+- Always preserve aspect ratio (“fit within” box; no crop).
+- Read common web formats (JPEG, PNG, GIF (first frame), WebP, BMP, TIFF if supported by backend).
+- Write derivative in **original format** (except animated GIFs → first frame still image).
+- Optional constraints for min/max width/height/quality.
+- Disk cache of derivatives keyed by (source path + options + source file signature).
+- Public service API so devs can call **the same resizer** from C# (not only via HTTP).
+- Sensible HTTP caching: `ETag`, `Last-Modified`, `Cache-Control`.
+- Linux/Windows/macOS support.
+- OSS-friendly licensing for any dependencies (MIT/BSD/Apache 2.0).
+
+### Out of scope (v1)
+
+- Cropping, padding, background fill, focal point, format conversion, smart sharpening.
+- Animated GIF/WebP output.
+- EXIF writing.
+- Streaming from remote URLs (only local files in v1; can add storage providers later).
+
+------
+
+## 2) Technology & licensing choices
+
+> **Hard requirement:** Linux support with no “restricted” license.
+>  **Recommended backend:** **SkiaSharp** (MIT) — fast, mature, cross-platform; pulls platform-specific native runtime packages automatically.
+>  **Alternative backend(s):**
+>
+> - **Magick.NET** (Apache 2.0) if teams prefer ImageMagick; heavier.
+> - **Windows-only** fallback: `System.Drawing` (not supported on Linux; guard behind OS check).
+
+To keep the package lean and safe, the library will:
+
+- Default to SkiaSharp (MIT + BSD-3-Clause for Skia).
+- Print a one-time startup log with detected codecs and platform details.
+- Abstract the imaging backend behind `IImageCodec` so future swaps don’t break public API.
+
+------
+
+## 3) High-level architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ASP.NET Core Pipeline                                                │
+│                                                                      │
+│  ┌────────────────────────┐      ┌───────────────┐                   │
+│  │ Static Files (optional)│  →   │ ResizeMiddleware ──┐              │
+│  └────────────────────────┘      └───────────────┘   │              │
+│                                                     ▼              │
+│                                            ┌─────────────────┐      │
+│                                            │ IImageCache      │      │
+│                                            └─────────────────┘      │
+│                                                     │               │
+│                                                     ▼               │
+│                                            ┌─────────────────┐      │
+│                                            │ IImageResizerSvc │─────►│Controllers / Razor / Services
+│                                            └─────────────────┘      │
+│                                                     │               │
+│                                                     ▼               │
+│                                            ┌─────────────────┐      │
+│                                            │ IImageCodec      │      │ (SkiaSharp)
+│                                            └─────────────────┘      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Flow (middleware)**
+
+1. Parse querystrings (`width`, `height`, `quality`).
+2. Validate with configured bounds.
+3. Build cache key from `(normalized source path, options, source signature)` where **signature** = last write time ticks + length (fast) and optional content hash (configurable).
+4. If cached derivative exists → stream it with correct headers.
+5. Else → decode original via codec → resize (fit) → encode → write to cache atomically → respond.
+
+**Concurrency:** Use an async keyed lock per cache key to avoid thundering herd on first request.
+
+------
+
+## 4) Configuration (appsettings.json)
+
+```json
+{
+  "ImageResize": {
+    "EnableMiddleware": true,
+    "RequestPathPrefix": "/media",          // Only intercept under this URL
+    "ContentRoot": "wwwroot",               // Where to locate original files
+    "CacheRoot": "wwwroot/_imgcache",       // Where to store derivatives
+    "AllowUpscale": false,                  // Never enlarge beyond original by default
+    "DefaultQuality": 80,                   // When only width/height set (JPEG/WebP)
+    "PngCompressionLevel": 6,               // 0-9 (if PNG output)
+    "Bounds": {
+      "MinWidth": 16, "MaxWidth": 4096,
+      "MinHeight": 16, "MaxHeight": 4096,
+      "MinQuality": 10, "MaxQuality": 95
+    },
+    "HashOriginalContent": false,           // If true, include SHA-1 of original in key
+    "Cache": {
+      "FolderSharding": 2,                  // create folder splits from key (e.g., ab/cd/…)
+      "PruneOnStartup": false,              // optional light cleanup
+      "MaxCacheBytes": 0                    // 0 = unlimited (v1: advisory only)
+    },
+    "ResponseCache": {
+      "ClientCacheSeconds": 604800,         // 7 days
+      "SendETag": true,
+      "SendLastModified": true
+    },
+    "AllowedExtensions": [".jpg",".jpeg",".png",".gif",".webp",".bmp",".tif",".tiff"],
+    "Backend": "SkiaSharp"                  // or "MagickNet", "SystemDrawing"
+  }
+}
+```
+
+All settings are **overridable** (IOptions pattern). Environment-specific overrides supported (standard ASP.NET config stack).
+
+------
+
+## 5) Public API surface
+
+### Options & DTOs
+
+```csharp
+public sealed record ResizeOptions(
+    int? Width,
+    int? Height,
+    int? Quality /* 1..100; used for JPEG/WebP; PNG uses CompressionLevel */
+);
+
+public sealed record ResizeResult(
+    string OriginalPath,
+    string CachedPath,
+    string ContentType,
+    int OutputWidth,
+    int OutputHeight,
+    long BytesWritten
+);
+```
+
+### Services
+
+```csharp
+public interface IImageResizerService
+{
+    /// Loads from disk, resizes (fit), caches, and returns info.
+    Task<ResizeResult> EnsureResizedAsync(
+        string relativePath,  // e.g., "media/photos/cat.jpg"
+        ResizeOptions options,
+        CancellationToken ct = default);
+
+    /// Core resize without touching HTTP. Returns a stream and content-type.
+    /// Does NOT write to cache (for advanced callers).
+    Task<(Stream Stream, string ContentType, int Width, int Height)>
+        ResizeToStreamAsync(
+            Stream original,
+            string? originalContentType,
+            ResizeOptions options,
+            CancellationToken ct = default);
+}
+
+public interface IImageCache
+{
+    string GetCachedFilePath(string relPath, ResizeOptions options, string sourceSignature);
+    Task<bool> ExistsAsync(string cachedPath, CancellationToken ct = default);
+    Task<Stream> OpenReadAsync(string cachedPath, CancellationToken ct = default);
+    Task WriteAtomicallyAsync(string cachedPath, Stream data, CancellationToken ct = default);
+}
+
+public interface IImageCodec // thin abstraction over SkiaSharp/Magick/etc.
+{
+    // Read basic metadata without fully decoding (if backend supports).
+    Task<(int Width, int Height, string ContentType)> ProbeAsync(Stream input, CancellationToken ct);
+
+    // Decode, resize (fit), and encode back to original (or best) format.
+    Task<(Stream Output, string ContentType, int OutW, int OutH)>
+        ResizeAsync(Stream input, string? originalContentType, ResizeOptions options, CancellationToken ct);
+}
+```
+
+### Middleware
+
+```csharp
+public sealed class ImageResizeMiddleware
+{
+    public async Task InvokeAsync(HttpContext ctx);
+}
+```
+
+------
+
+## 6) Query contract (HTTP)
+
+- `width` (int?), `height` (int?), `quality` (int?)
+- At least one of `width` or `height` must be present; both allowed.
+- **Aspect ratio rule:** compute scale factor to **fit within** (width, height). If only one provided, scale by that dimension. Never stretch unless `AllowUpscale=true`.
+- `quality`: 1..100 (defaults from config). For PNG, map to compression level (0..9) via a simple curve.
+
+**Examples**
+
+- `/media/kitten.jpg?width=800` → fit to 800w.
+- `/media/kitten.jpg?width=800&height=600` → fit within 800×600.
+- `/media/kitten.jpg?height=1080&quality=70` → fit to 1080h, recompress.
+
+------
+
+## 7) Cache design
+
+### Cache key
+
+```
+Key = SHA1(
+  ToLowerInvariant(NormalizePath(relativePath)) + "|" +
+  $"w={W ?? 0},h={H ?? 0},q={Q ?? defaultQ},up={AllowUpscale}" + "|" +
+  SourceSignature
+)
+
+SourceSignature = $"{LastWriteTimeUtcTicks}:{LengthBytes}" + (HashOriginalContent ? ":" + SHA1(file bytes) : "")
+```
+
+> Using mtime+length avoids rehashing big files while still invalidating when originals change. Enable `HashOriginalContent` when you need stronger guarantees (slower, but safe with network shares/NFS).
+
+### Cache structure
+
+```
+CacheRoot/
+  ab/cd/abcdef...key.ext          // sharded by first 4 hex chars
+```
+
+- `ext` matches the **output** format; typically the same as original for v1.
+- Atomic writes: save to `abcdef...key.ext.tmp` then move/rename.
+
+### Thread safety
+
+- A `ConcurrentDictionary<string, AsyncLock>` of in-flight keys.
+- Only the first request performs the resize; others await the same task.
+
+------
+
+## 8) HTTP caching & headers
+
+- `Cache-Control: public, max-age=ClientCacheSeconds` (default 7d).
+- `ETag`: hex of cache key or file hash.
+- `Last-Modified`: from cached file write time (or original’s mtime if passthrough).
+- Respond **304** on `If-None-Match`/`If-Modified-Since` matches.
+- `Vary: width, height, quality` (helps CDNs that respect custom vary; even if not standard, it documents the behavior).
+- `Content-Type` from codec; `Content-Length` known after write.
+
+------
+
+## 9) Programmatic usage example
+
+```csharp
+// Program.cs
+builder.Services.AddImageResize(o =>
+{
+    o.RequestPathPrefix = "/media";
+    o.ContentRoot = builder.Environment.WebRootPath; // typically wwwroot
+    o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache");
+    o.Bounds.MaxWidth = 4096;
+    o.Bounds.MaxHeight = 4096;
+    o.Bounds.MaxQuality = 95;
+    o.Backend = ImageBackend.SkiaSharp;
+});
+
+var app = builder.Build();
+
+app.UseImageResize(); // place BEFORE static files if you want the middleware to handle & serve
+app.UseStaticFiles(); // or after, if you prefer static files to serve misses first
+
+app.MapGet("/demo", async (IImageResizerService svc) =>
+{
+    var result = await svc.EnsureResizedAsync(
+        "media/photos/cat.jpg",
+        new ResizeOptions(Width: 1200, Height: null, Quality: 80)
+    );
+    return Results.File(result.CachedPath, result.ContentType);
+});
+
+app.Run();
+```
+
+------
+
+## 10) Middleware sketch
+
+```csharp
+public sealed class ImageResizeMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<ImageResizeMiddleware> _log;
+    private readonly ImageResizeOptions _opts;
+    private readonly IImageResizerService _svc;
+
+    public ImageResizeMiddleware(
+        RequestDelegate next,
+        IOptions<ImageResizeOptions> opts,
+        IImageResizerService svc,
+        ILogger<ImageResizeMiddleware> log)
+    {
+        _next = next; _opts = opts.Value; _svc = svc; _log = log;
+    }
+
+    public async Task InvokeAsync(HttpContext ctx)
+    {
+        if (!_opts.EnableMiddleware) { await _next(ctx); return; }
+
+        if (!ctx.Request.Path.StartsWithSegments(_opts.RequestPathPrefix, out var remainder))
+        { await _next(ctx); return; }
+
+        var relPath = remainder.Value.TrimStart('/'); // e.g., "photos/cat.jpg"
+
+        // only allow configured extensions
+        var ext = Path.GetExtension(relPath).ToLowerInvariant();
+        if (!_opts.AllowedExtensions.Contains(ext))
+        { await _next(ctx); return; }
+
+        // Parse & validate query
+        int? w = TryInt(ctx.Request.Query["width"]);
+        int? h = TryInt(ctx.Request.Query["height"]);
+        int? q = TryInt(ctx.Request.Query["quality"]);
+
+        if (w is null && h is null) { await _next(ctx); return; } // not our request
+
+        if (!Validate(w, h, q, _opts.Bounds, out var problem))
+        { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; await ctx.Response.WriteAsync(problem!); return; }
+
+        var options = new ResizeOptions(w, h, q);
+
+        // Conditional request precheck against cache file (if exists)
+        var result = await _svc.EnsureResizedAsync(Path.Combine(_opts.RequestPathPrefix.TrimStart('/'), relPath), options, ctx.RequestAborted);
+
+        if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
+            ETagMatches(etag, result.CachedPath))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status304NotModified;
+            return;
+        }
+
+        // Serve file
+        ctx.Response.ContentType = result.ContentType;
+        ApplyCacheHeaders(ctx.Response, result.CachedPath, _opts);
+
+        await using var fs = File.OpenRead(result.CachedPath);
+        ctx.Response.ContentLength = fs.Length;
+        await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
+    }
+
+    // helpers omitted for brevity
+}
+```
+
+------
+
+## 11) Resizing math (fit, preserve aspect)
+
+```csharp
+static (int outW, int outH) Fit(int srcW, int srcH, int? reqW, int? reqH, bool allowUpscale)
+{
+    double scaleW = reqW.HasValue ? (double)reqW.Value / srcW : double.PositiveInfinity;
+    double scaleH = reqH.HasValue ? (double)reqH.Value / srcH : double.PositiveInfinity;
+
+    double scale = Math.Min(scaleW, scaleH); // fit
+    if (double.IsInfinity(scale)) scale = reqW.HasValue ? scaleW : scaleH;
+    if (!allowUpscale) scale = Math.Min(scale, 1.0);
+
+    int outW = Math.Max(1, (int)Math.Round(srcW * scale));
+    int outH = Math.Max(1, (int)Math.Round(srcH * scale));
+    return (outW, outH);
+}
+```
+
+------
+
+## 12) SkiaSharp codec sketch
+
+```csharp
+public sealed class SkiaCodec : IImageCodec
+{
+    public async Task<(int Width, int Height, string ContentType)> ProbeAsync(Stream input, CancellationToken ct)
+    {
+        using var ms = await CopyToMemoryStream(input, ct);
+        using var codec = SKCodec.Create(ms);
+        var info = codec.Info;
+        var mime = MimeFromEncodedFormat(codec.EncodedFormat);
+        return (info.Width, info.Height, mime);
+    }
+
+    public async Task<(Stream Output, string ContentType, int OutW, int OutH)>
+        ResizeAsync(Stream input, string? originalContentType, ResizeOptions options, CancellationToken ct)
+    {
+        using var ms = await CopyToMemoryStream(input, ct);
+        using var codec = SKCodec.Create(ms);
+        var info = codec.Info;
+
+        var (outW, outH) = Fit(info.Width, info.Height, options.Width, options.Height, allowUpscale: false);
+
+        using var bitmap = SKBitmap.Decode(ms);
+        using var resized = bitmap.Resize(
+            new SKImageInfo(outW, outH, bitmap.ColorType, bitmap.AlphaType),
+            SKFilterQuality.Medium);
+
+        using var image = SKImage.FromBitmap(resized);
+        var fmt = codec.EncodedFormat; // keep original
+
+        var outStream = new MemoryStream();
+        switch (fmt)
+        {
+            case SKEncodedImageFormat.Jpeg:
+                image.Encode(SKEncodedImageFormat.Jpeg, options.Quality ?? 80).SaveTo(outStream); break;
+            case SKEncodedImageFormat.Webp:
+                image.Encode(SKEncodedImageFormat.Webp, options.Quality ?? 80).SaveTo(outStream); break;
+            case SKEncodedImageFormat.Png:
+                // Map 1..100 quality to 0..9 compression (simple)
+                var level = MapQualityToPngLevel(options.Quality);
+                image.Encode(SKEncodedImageFormat.Png, level).SaveTo(outStream); break;
+            default:
+                image.Encode(fmt, options.Quality ?? 80).SaveTo(outStream); break;
+        }
+        outStream.Position = 0;
+
+        var mime = MimeFromEncodedFormat(fmt);
+        return (outStream, mime, outW, outH);
+    }
+}
+```
+
+> **Note:** For GIF we decode first frame; for TIFF we pick first page. Document this clearly.
+
+------
+
+## 13) Validation rules
+
+- `width` & `height` must be positive integers.
+- If both present → apply **fit**; if either produces < 1 after scaling, clamp to 1.
+- `quality` clamped to config bounds; ignored for formats that don’t support it (PNG uses mapped compression).
+- `AllowUpscale=false` reduces target if requested > original.
+
+**Error responses:**
+
+- 400 with clear message (e.g., `"width must be between 16 and 4096"`).
+- 415 if file extension or content type not supported.
+- 404 if original doesn’t exist.
+- 500 for unexpected codec failures (log event id & path).
+
+------
+
+## 14) Security & robustness
+
+- **Path traversal**: Deny `..`, rooted paths, and invalid segments; resolve to `ContentRoot`.
+- **Memory limits**: Reject images over configurable max pixel count (e.g., 100 MP) to avoid OOM.
+- **Time-outs**: Respect request `CancellationToken`.
+- **EXIF orientation**: Auto-apply orientation (Skia respects this on decode).
+- **Transparent PNG → JPEG**: We **do not** change formats in v1; transparency preserved if original had it.
+- **Logging**: Structured logs for cache hits/misses, errors, codec chosen, timings.
+
+------
+
+## 15) Project layout
+
+```
+/src
+  ImageResize.Abstractions/        // interfaces, options, DTOs (no deps)
+  ImageResize.Core/                // middleware, service, cache, keying
+  ImageResize.Codecs.Skia/         // SkiaSharp implementation
+  ImageResize.Codecs.Magick/       // optional package (split to keep core slim)
+/samples
+  WebDemo/                         // simple ASP.NET Core app
+/tests
+  ImageResize.Tests/               // unit + integration tests
+```
+
+- **Target frameworks:** `net9.0`.
+- **NuGet packaging:** ship **Core** + **Skia codec** together as the default package; Magick as optional secondary package.
+- **Trimming/NativeAOT:** mark types with `DynamicallyAccessedMembers` if required; test trimming.
+
+------
+
+## 16) Implementation plan (step-by-step)
+
+1. **Abstractions & Options**
+   - Define `ResizeOptions`, `ResizeResult`, `ImageResizeOptions`, `IImageResizerService`, `IImageCache`, `IImageCodec`.
+   - Add extension methods: `AddImageResize`, `UseImageResize`.
+2. **Cache & keying**
+   - Implement `FileSystemImageCache` with atomic write and folder sharding.
+   - Implement `AsyncKeyedLocker` using `SemaphoreSlim`.
+3. **Codec (Skia)**
+   - Implement `SkiaCodec` with probe/resize (as above).
+   - Map MIME types; handle GIF/TIFF as first frame/page.
+4. **Resizer service**
+   - Implement `ImageResizerService`:
+     - Resolve original absolute path (validate).
+     - Build key from options + source signature.
+     - Lock; check cache; if miss → open original → codec → write cache → return info.
+5. **Middleware**
+   - Parse/validate query.
+   - Call service.
+   - Apply HTTP conditional headers; serve file stream.
+6. **Configuration binding**
+   - `ImageResizeOptions` bound via `IOptionsMonitor<>`.
+   - Ensure hot-reload of options (v2).
+7. **Logging & metrics**
+   - Add `ILogger` events: Hit/Miss/Error/ResizeTime/BytesWritten.
+   - (Optional) `EventCounters` or `Meter` for OpenTelemetry.
+8. **Samples & docs**
+   - Sample `Program.cs` for middleware and for programmatic usage.
+   - README: migration notes from ImageSharp (param parity, behavior).
+9. **Testing**
+   - Unit tests for math, keying, validation, etags.
+   - Integration tests with sample images (jpeg/png/webp/gif/tiff) on Linux via CI.
+   - Concurrency test (N parallel requests → one resize, N-1 waits).
+   - Cache invalidation test (touch original → key changes).
+   - Bounds enforcement tests.
+10. **Packaging**
+
+- `PackageDescription`, `RepositoryUrl`, `LicenseExpression: MIT`.
+- Include native runtime identifiers via SkiaSharp packages.
+- Publish Symbols, SourceLink.
+
+------
+
+## 17) Migration notes for ImageSharp users
+
+- **Query params:** identical: `width`, `height`, `quality`.
+- **Aspect ratio:** “fit” semantics; if you previously used “pad” or “crop”, not supported in v1.
+- **Cache:** a different folder layout; safe to delete old cache; ours is deterministic and rebuildable.
+- **Transparency:** preserved when original format supports it; we do not convert to JPEG automatically.
+- **Animated formats:** we output first frame only (documented difference).
+
+------
+
+## 18) Example unit test sketches
+
+```csharp
+[Theory]
+[InlineData(4000,3000,800,null,800,600)]
+[InlineData(4000,3000,800,800,800,600)]
+[InlineData(800,600,1600,null,800,600)] // no upscale
+public void Fit_CalculatesExpected(int sw, int sh, int? w, int? h, int ew, int eh)
+{
+    var (ow, oh) = Fit(sw, sh, w, h, allowUpscale:false);
+    Assert.Equal(ew, ow); Assert.Equal(eh, oh);
+}
+```
+
+------
+
+## 19) Performance considerations
+
+- Use **decode → resize → encode** once; avoid intermediate streams with large buffers.
+- For very large images, consider `SKImage.FromEncodedData(ms)` + `SKImage.ScalePixels` to reduce memory footprint (evaluate in perf pass).
+- Optionally enable WebP lossless for PNG sources + quality mapping in future (behind flag).
+- Consider simple on-disk LRU pruning utility (v2).
+
+------
+
+## 20) Developer ergonomics
+
+- **Minimal bootstrapping:** `AddImageResize()` and `UseImageResize()`.
+- **Strong defaults:** sane bounds; client cache; ETag.
+- **Clear logs:** cache misses tell you *why* (bounds, nonexistent, unsupported type, etc.).
+- **Services first:** the middleware is a thin HTTP wrapper around `IImageResizerService`.
+
+------
+
+## 21) Risks & mitigations
+
+- **Codec availability on Linux:** SkiaSharp runtime packages handle native bits; document required lib dependencies (generally none beyond included).
+- **“All image formats” expectation:** Set realistic support list and fail with 415 for exotic types; extensible codec interface to add more.
+- **Disk growth:** Provide a sample cron job or background hosted service for pruning in v2.
+- **Hot deploys & cache path changes:** Cache key includes options; changing bounds does not break; changing cache folder simply rebuilds on demand.
+
+------
+
+## 22) Minimal extension methods (registration)
+
+```csharp
+public static class ImageResizeServiceCollectionExtensions
+{
+    public static IServiceCollection AddImageResize(this IServiceCollection services, Action<ImageResizeOptions>? configure = null)
+    {
+        services.AddOptions<ImageResizeOptions>().BindConfiguration("ImageResize");
+        if (configure is not null) services.Configure(configure);
+
+        services.TryAddSingleton<IImageCache, FileSystemImageCache>();
+        services.TryAddSingleton<IImageCodec, SkiaCodec>();
+        services.TryAddSingleton<IImageResizerService, ImageResizerService>();
+
+        return services;
+    }
+
+    public static IApplicationBuilder UseImageResize(this IApplicationBuilder app)
+        => app.UseMiddleware<ImageResizeMiddleware>();
+}
+```
+
+------
+
+## 23) Done criteria (v1)
+
+- ✅ Works on Windows, Linux (x64/arm64) with SkiaSharp.
+- ✅ Resizes JPEG/PNG/WebP/GIF(first frame)/BMP/TIFF(first page).
+- ✅ Middleware path interception + parameter validation.
+- ✅ On-disk cache with deterministic keying and atomic writes.
+- ✅ Public service usable outside HTTP.
+- ✅ Tests covering math, cache, content negotiation, conditionals.
+- ✅ Clear README with setup, limits, and migration notes.
+
+------
+
+If you want, I can turn this into a ready-to-publish solution skeleton (projects, csproj, and the initial code files) so you can drop it into a repo and start filling in the blanks.

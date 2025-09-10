@@ -1,0 +1,48 @@
+using ImageResize.Abstractions.Configuration;
+using ImageResize.Abstractions.Interfaces;
+using ImageResize.Codecs.Skia;
+using ImageResize.Core.Cache;
+using ImageResize.Core.Middleware;
+using ImageResize.Core.Services;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace ImageResize.Core.Extensions;
+
+/// <summary>
+/// Extension methods for registering ImageResize services.
+/// </summary>
+public static class ImageResizeServiceCollectionExtensions
+{
+    /// <summary>
+    /// Adds ImageResize services to the service collection.
+    /// </summary>
+    public static IServiceCollection AddImageResize(this IServiceCollection services, Action<ImageResizeOptions>? configure = null)
+    {
+        var options = new ImageResizeOptions();
+
+        // Apply configuration if provided
+        if (configure is not null)
+        {
+            configure(options);
+        }
+
+        // Register options as singleton for direct injection
+        services.AddSingleton(options);
+
+        // Register core services
+        services.AddSingleton<IImageCache, FileSystemImageCache>();
+        services.AddSingleton<IImageCodec, SkiaCodec>();
+        services.AddSingleton<IImageResizerService, ImageResizerService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds ImageResize middleware to the application pipeline.
+    /// </summary>
+    public static IApplicationBuilder UseImageResize(this IApplicationBuilder app)
+    {
+        return app.UseMiddleware<ImageResizeMiddleware>();
+    }
+}

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <LangVersion>latest</LangVersion>
+        <PackageId>ImageResize.Core</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>ImageResize Team</Authors>
+        <Description>Minimal, cross-platform image resize middleware for ASP.NET Core</Description>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/your-org/ImageResize</RepositoryUrl>
+        <PackageTags>aspnetcore,image,resize,middleware,cache</PackageTags>
+        <WarningsNotAsErrors>NU1605</WarningsNotAsErrors>
+        <NoWarn>CS1998,CS8604</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.8" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.8" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.8" />
+        <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.0" />
+        <PackageReference Include="System.Text.Json" Version="9.0.8" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\ImageResize.Abstractions\ImageResize.Abstractions.csproj" />
+        <ProjectReference Include="..\ImageResize.Codecs.Skia\ImageResize.Codecs.Skia.csproj" />
+    </ItemGroup>
+
+</Project>
