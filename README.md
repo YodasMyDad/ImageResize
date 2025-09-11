@@ -2,7 +2,7 @@
 
 A minimal, cross-platform image resize middleware for .NET Core that provides a drop-in replacement for some common ImageSharp functionality. Built with SkiaSharp for fast, reliable image processing across Windows, Linux, and macOS.
 
-[![NuGet](https://img.shields.io/nuget/v/VibedMediatr.svg)](https://www.nuget.org/packages/ImageResize/)
+[![NuGet](https://img.shields.io/nuget/v/ImageResize.svg)](https://www.nuget.org/packages/ImageResize/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![.NET](https://img.shields.io/badge/.NET-9.0-blue.svg)](https://dotnet.microsoft.com/)
 
