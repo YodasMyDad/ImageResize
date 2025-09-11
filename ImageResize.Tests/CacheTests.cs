@@ -1,5 +1,5 @@
-using ImageResize.Cache;
-using ImageResize.Configuration;
+using ImageResize.Core.Cache;
+using ImageResize.Core.Configuration;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

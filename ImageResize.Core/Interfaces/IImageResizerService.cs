@@ -1,7 +1,7 @@
 using ImageResize.Core.Models;
 using ImageResize.Models;
 
-namespace ImageResize.Interfaces;
+namespace ImageResize.Core.Interfaces;
 
 /// <summary>
 /// Service for resizing images with caching.

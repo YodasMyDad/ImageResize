@@ -1,10 +1,10 @@
-using ImageResize.Configuration;
-using ImageResize.Interfaces;
+using ImageResize.Core.Configuration;
+using ImageResize.Core.Interfaces;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace ImageResize.Cache;
+namespace ImageResize.Core.Cache;
 
 /// <summary>
 /// File system-based image cache with atomic writes and folder sharding.

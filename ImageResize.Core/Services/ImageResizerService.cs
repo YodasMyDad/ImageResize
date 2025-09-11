@@ -1,11 +1,11 @@
-using ImageResize.Configuration;
+using ImageResize.Core.Configuration;
+using ImageResize.Core.Interfaces;
 using ImageResize.Core.Models;
-using ImageResize.Interfaces;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace ImageResize.Services;
+namespace ImageResize.Core.Services;
 
 /// <summary>
 /// Main service for image resizing operations.

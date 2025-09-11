@@ -1,11 +1,11 @@
-using ImageResize.Configuration;
-using ImageResize.Interfaces;
+using ImageResize.Core.Configuration;
+using ImageResize.Core.Interfaces;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SkiaSharp;
 
-namespace ImageResize.Codecs;
+namespace ImageResize.Core.Codecs;
 
 /// <summary>
 /// SkiaSharp-based image codec implementation.
@@ -50,9 +50,11 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         if (bitmap == null)
             throw new InvalidOperationException("Unable to decode bitmap from image data");
 
+        // Use high-quality cubic sampling for better resize quality
+        var samplingOptions = new SKSamplingOptions(SKCubicResampler.Mitchell);
         using var resized = bitmap.Resize(
             new SKImageInfo(outW, outH, bitmap.ColorType, bitmap.AlphaType),
-            SKSamplingOptions.Default);
+            samplingOptions);
 
         using var image = SKImage.FromBitmap(resized);
         var fmt = codec.EncodedFormat; // Keep original format

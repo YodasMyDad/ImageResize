@@ -1,5 +1,5 @@
 using ImageResize.Core.Extensions;
-using ImageResize.Interfaces;
+using ImageResize.Core.Interfaces;
 using ImageResize.Models;
 
 var builder = WebApplication.CreateBuilder(args);

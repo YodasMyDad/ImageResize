@@ -7,15 +7,13 @@
         <LangVersion>latest</LangVersion>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>ImageResize</PackageId>
-        <Version>1.1.0</Version>
+        <Version>1.2.0</Version>
         <Authors>Lee Messenger</Authors>
         <Description>Minimal, cross-platform image resize middleware for ASP.NET Core</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/YodasMyDad/ImageResize</RepositoryUrl>
         <PackageTags>aspnetcore,image,resize,middleware,cache</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <WarningsNotAsErrors>NU1605</WarningsNotAsErrors>
-        <NoWarn>CS1998,CS8604</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>

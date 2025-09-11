@@ -1,4 +1,4 @@
-namespace ImageResize.Configuration;
+namespace ImageResize.Core.Configuration;
 
 /// <summary>
 /// Configuration options for ImageResize middleware.

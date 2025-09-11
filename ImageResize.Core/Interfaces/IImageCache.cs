@@ -1,6 +1,6 @@
 using ImageResize.Models;
 
-namespace ImageResize.Interfaces;
+namespace ImageResize.Core.Interfaces;
 
 /// <summary>
 /// Abstraction for image cache operations.

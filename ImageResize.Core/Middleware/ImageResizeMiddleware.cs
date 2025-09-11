@@ -1,12 +1,13 @@
-using ImageResize.Configuration;
-using ImageResize.Interfaces;
+using System.IO;
+using System.Security.Cryptography;
+using ImageResize.Core.Configuration;
+using ImageResize.Core.Interfaces;
 using ImageResize.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Security.Cryptography;
 
-namespace ImageResize.Middleware;
+namespace ImageResize.Core.Middleware;
 
 /// <summary>
 /// Middleware for handling image resize requests.
@@ -53,7 +54,8 @@ public sealed class ImageResizeMiddleware(
 
         if (w is null && h is null)
         {
-            await next(ctx);
+            // No resize parameters provided, serve original image
+            await ServeOriginalImageAsync(ctx, relPath);
             return;
         }
 
@@ -175,5 +177,87 @@ public sealed class ImageResizeMiddleware(
 
         response.Headers["Cache-Control"] = $"public, max-age={opts.Value.ResponseCache.ClientCacheSeconds}";
         response.Headers["Vary"] = "width, height, quality";
+    }
+
+    private async Task ServeOriginalImageAsync(HttpContext ctx, string relativePath)
+    {
+        try
+        {
+            // Resolve and validate the original file path
+            var originalPath = ResolveOriginalPath(relativePath);
+
+            if (!File.Exists(originalPath))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
+            // Get file info and content type
+            var fileInfo = new FileInfo(originalPath);
+            var contentType = GetContentTypeFromPath(originalPath);
+
+            // Handle conditional requests
+            if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
+                !string.IsNullOrEmpty(etag) &&
+                ETagMatches(etag, originalPath))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status304NotModified;
+                return;
+            }
+
+            if (ctx.Request.Headers.TryGetValue("If-Modified-Since", out var ifModified) &&
+                !string.IsNullOrEmpty(ifModified) &&
+                LastModifiedMatches(ifModified, originalPath))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status304NotModified;
+                return;
+            }
+
+            // Set response headers
+            ctx.Response.ContentType = contentType;
+            ctx.Response.ContentLength = fileInfo.Length;
+            ApplyCacheHeaders(ctx.Response, originalPath);
+
+            // Serve the file
+            await using var fs = File.OpenRead(originalPath);
+            await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
+
+            log.LogDebug("Served original image {Path} ({Size} bytes)", originalPath, fileInfo.Length);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Error serving original image {Path}", relativePath);
+            ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        }
+    }
+
+    private string ResolveOriginalPath(string relativePath)
+    {
+        // Security: Prevent path traversal
+        var fullPath = Path.GetFullPath(Path.Combine(opts.Value.ContentRoot, relativePath));
+
+        // Ensure the resolved path is within ContentRoot
+        var contentRootFull = Path.GetFullPath(opts.Value.ContentRoot);
+        if (!fullPath.StartsWith(contentRootFull, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException("Path traversal attempt detected");
+        }
+
+        return fullPath;
+    }
+
+    private static string GetContentTypeFromPath(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".tiff" or ".tif" => "image/tiff",
+            _ => "application/octet-stream"
+        };
     }
 }
