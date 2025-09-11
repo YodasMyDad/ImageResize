@@ -51,17 +51,41 @@ app.Run();
 ```csharp
 builder.Services.AddImageResize(o =>
 {
-    o.RequestPathPrefix = "/media";
-    o.ContentRoot = Path.Combine(builder.Environment.WebRootPath, "images");
-    o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache");
-    o.AllowUpscale = false;
-    o.DefaultQuality = 85;
-    o.PngCompressionLevel = 6;
-    o.Backend = ImageBackend.SkiaSharp;
-    o.Cache.MaxCacheBytes = 1073741824; // 1GB cache limit
-    o.Cache.PruneOnStartup = true;
+    o.RequestPathPrefix = "/media";           // URL prefix to monitor (e.g., /media/*)
+    o.ContentRoot = Path.Combine(builder.Environment.WebRootPath, "images");  // Where original images are stored
+    o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache"); // Where resized images are cached
+    o.AllowUpscale = false;                  // Don't enlarge images beyond original size
+    o.DefaultQuality = 85;                   // Default JPEG/WebP quality
+    o.PngCompressionLevel = 6;               // PNG compression (0-9)
+    o.Backend = ImageBackend.SkiaSharp;      // Image processing backend
+    o.Cache.MaxCacheBytes = 1073741824;      // 1GB cache limit (0 = unlimited)
+    o.Cache.PruneOnStartup = true;           // Clean old cache files on app start
 });
 ```
+
+### URL Structure and File System Mapping
+
+The middleware intercepts requests under the configured `RequestPathPrefix` (default: `/media`) and maps them to files on disk. Here's how it works:
+
+**URL Pattern:**
+```
+/media/{relative-path-to-image}?width={width}&height={height}&quality={quality}
+```
+
+**File System Mapping:**
+- **Original Images**: Stored in `ContentRoot` (default: `wwwroot/images/`)
+- **Cached Resized Images**: Stored in `CacheRoot` (default: `wwwroot/_imgcache/`)
+
+**Example:**
+- Request: `GET /media/photos/cat.jpg?width=800`
+- Original file: `wwwroot/images/photos/cat.jpg`
+- Cached file: `wwwroot/_imgcache/{hash}/cat.jpg` (with sharding like `ab/cd/{hash}.jpg`)
+
+**Key Points:**
+- The `/media` prefix is **not** a real folder - it's just a URL route that the middleware intercepts
+- Original images remain untouched in their original location
+- Resized images are automatically cached in a separate folder for performance
+- Cache uses SHA1 hashing with folder sharding to prevent filesystem issues with many files
 
 ### Usage Examples
 
@@ -74,6 +98,9 @@ GET /media/photos/cat.jpg?width=800&height=600
 
 # Resize with quality control
 GET /media/photos/cat.jpg?height=1080&quality=85
+
+# Serve original image (no resize parameters)
+GET /media/photos/cat.jpg
 ```
 
 ## Configuration
@@ -82,31 +109,31 @@ GET /media/photos/cat.jpg?height=1080&quality=85
 ```json
 {
   "ImageResize": {
-    "EnableMiddleware": true,
-    "RequestPathPrefix": "/media",
-    "ContentRoot": "wwwroot/images",
-    "CacheRoot": "wwwroot/_imgcache",
-    "AllowUpscale": false,
-    "DefaultQuality": 80,
-    "PngCompressionLevel": 6,
+    "EnableMiddleware": true,              // Enable/disable the middleware
+    "RequestPathPrefix": "/media",         // URL prefix to monitor for image requests
+    "ContentRoot": "wwwroot/images",       // Directory containing original images
+    "CacheRoot": "wwwroot/_imgcache",      // Directory for cached resized images
+    "AllowUpscale": false,                 // Prevent enlarging images beyond original size
+    "DefaultQuality": 80,                  // Default JPEG/WebP quality (1-100)
+    "PngCompressionLevel": 6,              // PNG compression level (0-9)
     "Bounds": {
-      "MinWidth": 16, "MaxWidth": 4096,
-      "MinHeight": 16, "MaxHeight": 4096,
-      "MinQuality": 10, "MaxQuality": 95
+      "MinWidth": 16, "MaxWidth": 4096,    // Width limits in pixels
+      "MinHeight": 16, "MaxHeight": 4096,  // Height limits in pixels
+      "MinQuality": 10, "MaxQuality": 95   // Quality limits (JPEG/WebP only)
     },
-    "HashOriginalContent": false,
+    "HashOriginalContent": false,          // Include file content in cache key (slower but more accurate)
     "Cache": {
-      "FolderSharding": 2,
-      "PruneOnStartup": false,
-      "MaxCacheBytes": 0
+      "FolderSharding": 2,                 // Subfolder levels for cache organization (0-4)
+      "PruneOnStartup": false,             // Clean old cache files when app starts
+      "MaxCacheBytes": 0                   // Cache size limit in bytes (0 = unlimited)
     },
     "ResponseCache": {
-      "ClientCacheSeconds": 604800,
-      "SendETag": true,
-      "SendLastModified": true
+      "ClientCacheSeconds": 604800,        // Browser cache duration (7 days)
+      "SendETag": true,                    // Send ETag headers for caching
+      "SendLastModified": true             // Send Last-Modified headers for caching
     },
     "AllowedExtensions": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"],
-    "Backend": "SkiaSharp"
+    "Backend": "SkiaSharp"                 // Image processing backend
   }
 }
 ```
