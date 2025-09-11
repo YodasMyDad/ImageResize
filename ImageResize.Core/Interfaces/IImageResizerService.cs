@@ -1,3 +1,4 @@
+using ImageResize.Core.Models;
 using ImageResize.Models;
 
 namespace ImageResize.Interfaces;
@@ -25,4 +26,14 @@ public interface IImageResizerService
             string? originalContentType,
             ResizeOptions options,
             CancellationToken ct = default);
+
+    /// <summary>
+    /// Simple resize that returns a complete ImageResult with all metadata.
+    /// Perfect for most use cases - handles everything in one call.
+    /// </summary>
+    Task<ImageResult> ResizeAsync(
+        Stream original,
+        string? originalContentType,
+        ResizeOptions options,
+        CancellationToken ct = default);
 }

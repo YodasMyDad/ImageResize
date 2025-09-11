@@ -1,4 +1,5 @@
 using ImageResize.Configuration;
+using ImageResize.Core.Models;
 using ImageResize.Interfaces;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
@@ -84,6 +85,60 @@ public sealed class ImageResizerService(
         CancellationToken ct = default)
     {
         return await codec.ResizeAsync(original, originalContentType, options, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<ImageResult> ResizeAsync(
+        Stream original,
+        string? originalContentType,
+        ResizeOptions options,
+        CancellationToken ct = default)
+    {
+        // Probe original image to get metadata
+        var originalPosition = original.Position;
+        var (originalWidth, originalHeight, detectedContentType) = await codec.ProbeAsync(original, ct);
+        original.Position = originalPosition; // Reset stream position
+
+        // Resize the image
+        var (resizedStream, contentType, newWidth, newHeight) = await codec.ResizeAsync(
+            original, originalContentType, options, ct);
+
+        // Create helper functions for content type detection
+        string GetFileExtensionFromContentType(string ct) => ct.ToLowerInvariant() switch
+        {
+            "image/jpeg" => ".jpg",
+            "image/png" => ".png",
+            "image/gif" => ".gif",
+            "image/webp" => ".webp",
+            "image/bmp" => ".bmp",
+            "image/tiff" => ".tiff",
+            _ => ".bin"
+        };
+
+        string GetFormatFromContentType(string ct) => ct.ToLowerInvariant() switch
+        {
+            "image/jpeg" => "JPEG",
+            "image/png" => "PNG",
+            "image/gif" => "GIF",
+            "image/webp" => "WebP",
+            "image/bmp" => "BMP",
+            "image/tiff" => "TIFF",
+            _ => "Unknown"
+        };
+
+        // Create and return ImageResult with full metadata
+        return new ImageResult(
+            resizedStream,
+            newWidth,
+            newHeight,
+            contentType,
+            resizedStream.Length,
+            GetFileExtensionFromContentType(contentType),
+            GetFormatFromContentType(contentType),
+            originalWidth,
+            originalHeight,
+            options.Quality,
+            true); // IsProcessed = true since we resized it
     }
 
     private string ResolveOriginalPath(string relativePath)
