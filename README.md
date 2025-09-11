@@ -204,52 +204,8 @@ Then process the stream:
 var options = new ResizeOptions(Width: 1920, Height: 1080, Quality: 90);
 using var resizedImage = await resizerService.ResizeAsync(stream, null, options);
 
-// Access all metadata
-Console.WriteLine($"Resized: {resizedImage.Width}x{resizedImage.Height} " +
-                 $"({resizedImage.FileSizeHumanReadable}) " +
-                 $"{resizedImage.Format} format");
-
 // Save the result
 await resizedImage.SaveAsync(filePath);
-```
-
-### Advanced Usage with Custom Quality
-
-```csharp
-// Process with custom quality settings
-var options = new ResizeOptions(Width: 1920, Height: 1080, Quality: 90);
-using var imageResult = await resizerService.ResizeAsync(originalStream, null, options);
-
-// Access computed properties
-bool wasResized = imageResult.WasResized;        // true
-double aspectRatio = imageResult.AspectRatio;     // 1.6
-string sizeDisplay = imageResult.FileSizeHumanReadable; // "245 KB"
-bool isLandscape = imageResult.IsLandscape;
-long pixelCount = imageResult.PixelCount;
-```
-
-### Migration from ImageSharp
-
-```csharp
-// OLD (ImageSharp)
-using var image = await Image.LoadAsync(stream);
-await image.SaveAsync(filePath);
-media.Width = image.Width;
-media.Height = image.Height;
-
-// NEW (ImageResize) - Simple one-call approach
-var options = new ResizeOptions(Width: 1920, Height: 1080, Quality: 85);
-using var resizedImage = await resizerService.ResizeAsync(stream, null, options);
-await resizedImage.SaveAsync(filePath);
-
-// Access all the metadata you need
-media.Width = resizedImage.Width;
-media.Height = resizedImage.Height;
-media.FileSize = resizedImage.FileSize;
-media.ContentType = resizedImage.ContentType;
-media.Format = resizedImage.Format;
-media.AspectRatio = resizedImage.AspectRatio;
-media.WasResized = resizedImage.WasResized;
 ```
 
 ### Convenience Methods
@@ -265,12 +221,6 @@ using var resized = await resizerService.ResizeToHeightAsync(stream, 600);
 
 // Resize to fit within dimensions (maintains aspect ratio)
 using var resized = await resizerService.ResizeToFitAsync(stream, 1920, 1080);
-
-// Create thumbnail (default 300x300)
-using var thumbnail = await resizerService.CreateThumbnailAsync(stream);
-
-// Create custom size thumbnail
-using var thumbnail = await resizerService.CreateThumbnailAsync(stream, 150);
 ```
 
 ## Cache Design
