@@ -22,50 +22,86 @@ public static class UtilityExtensions
         string? contentType = null,
         CancellationToken ct = default)
     {
-        // First, probe the image to get original dimensions
-        var codec = resizerService.GetCodec();
-        var (width, height, detectedContentType) = await codec.ProbeAsync(imageStream, ct);
+        // Handle non-seekable streams (like BrowserFileStream) by buffering to MemoryStream
+        Stream workingStream = imageStream;
+        bool isBufferedStream = false;
 
-        // Reset stream position after probing
-        imageStream.Position = 0;
-
-        // Check if resizing is needed
-        if (width <= maxPixelSize && height <= maxPixelSize)
+        if (!imageStream.CanSeek)
         {
-            // No resize needed, return original
-            var streamLength = imageStream.Length;
-            var detectedType = detectedContentType ?? contentType ?? "application/octet-stream";
-            var fileExt = GetFileExtensionFromContentType(detectedType);
-            var imgFormat = GetFormatFromContentType(detectedType);
-
-            return new ImageResult(imageStream, width, height, detectedType,
-                                   streamLength, fileExt, imgFormat, width, height, null, false);
+            // Buffer the entire stream for non-seekable streams
+            var memoryStream = new MemoryStream();
+            await imageStream.CopyToAsync(memoryStream, ct);
+            memoryStream.Position = 0;
+            workingStream = memoryStream;
+            isBufferedStream = true;
         }
 
-        // Determine resize dimensions (maintain aspect ratio)
-        int newWidth, newHeight;
-        if (width > height)
+        try
         {
-            newWidth = maxPixelSize;
-            newHeight = (int)Math.Round((double)height * maxPixelSize / width);
+            // First, probe the image to get original dimensions
+            var codec = resizerService.GetCodec();
+            var (width, height, detectedContentType) = await codec.ProbeAsync(workingStream, ct);
+
+            // Reset stream position after probing (only if seekable)
+            if (workingStream.CanSeek)
+            {
+                workingStream.Position = 0;
+            }
+
+            // Check if resizing is needed
+            if (width <= maxPixelSize && height <= maxPixelSize)
+            {
+                // No resize needed, return the stream
+                var streamLength = workingStream.Length;
+                var detectedType = detectedContentType ?? contentType ?? "application/octet-stream";
+                var fileExt = GetFileExtensionFromContentType(detectedType);
+                var imgFormat = GetFormatFromContentType(detectedType);
+
+                // If we buffered the stream, return the buffered version
+                // Otherwise return the original stream (position already reset if possible)
+                var resultStream = isBufferedStream ? workingStream : imageStream;
+                if (!isBufferedStream && imageStream.CanSeek)
+                {
+                    imageStream.Position = 0; // Reset original stream if possible
+                }
+
+                return new ImageResult(resultStream, width, height, detectedType,
+                                       streamLength, fileExt, imgFormat, width, height, null, false);
+            }
+
+            // Determine resize dimensions (maintain aspect ratio)
+            int newWidth, newHeight;
+            if (width > height)
+            {
+                newWidth = maxPixelSize;
+                newHeight = (int)Math.Round((double)height * maxPixelSize / width);
+            }
+            else
+            {
+                newHeight = maxPixelSize;
+                newWidth = (int)Math.Round((double)width * maxPixelSize / height);
+            }
+
+            // Resize the image
+            var options = new ResizeOptions(Width: newWidth, Height: newHeight, Quality: null);
+            var (resizedStream, resultContentType, resultWidth, resultHeight) =
+                await resizerService.ResizeToStreamAsync(workingStream, contentType, options, ct);
+
+            var resizedLength = resizedStream.Length;
+            var resultExt = GetFileExtensionFromContentType(resultContentType);
+            var resultFormat = GetFormatFromContentType(resultContentType);
+
+            return new ImageResult(resizedStream, resultWidth, resultHeight, resultContentType,
+                                   resizedLength, resultExt, resultFormat, width, height, options.Quality, true);
         }
-        else
+        finally
         {
-            newHeight = maxPixelSize;
-            newWidth = (int)Math.Round((double)width * maxPixelSize / height);
+            // Clean up buffered stream if we created one and it's not being returned
+            if (isBufferedStream && workingStream != null)
+            {
+                // Don't dispose here - it will be disposed by the caller via ImageResult
+            }
         }
-
-        // Resize the image
-        var options = new ResizeOptions(Width: newWidth, Height: newHeight, Quality: null);
-        var (resizedStream, resultContentType, resultWidth, resultHeight) =
-            await resizerService.ResizeToStreamAsync(imageStream, contentType, options, ct);
-
-        var resizedLength = resizedStream.Length;
-        var resultExt = GetFileExtensionFromContentType(resultContentType);
-        var resultFormat = GetFormatFromContentType(resultContentType);
-
-        return new ImageResult(resizedStream, resultWidth, resultHeight, resultContentType,
-                               resizedLength, resultExt, resultFormat, width, height, options.Quality, true);
     }
 
     /// <summary>
@@ -75,7 +111,10 @@ public static class UtilityExtensions
     public static async Task SaveAsync(this ImageResult imageResult, string filePath, CancellationToken ct = default)
     {
         await using var fileStream = File.Create(filePath);
-        imageResult.Stream.Position = 0;
+        if (imageResult.Stream.CanSeek)
+        {
+            imageResult.Stream.Position = 0;
+        }
         await imageResult.Stream.CopyToAsync(fileStream, ct);
     }
 
@@ -92,8 +131,11 @@ public static class UtilityExtensions
         var codec = resizerService.GetCodec();
         var (width, height, detectedContentType) = await codec.ProbeAsync(stream, ct);
 
-        // Reset stream position after probing
-        stream.Position = 0;
+        // Reset stream position after probing (only if seekable)
+        if (stream.CanSeek)
+        {
+            stream.Position = 0;
+        }
 
         var streamSize = stream.Length;
         var finalType = detectedContentType ?? contentType ?? "application/octet-stream";
