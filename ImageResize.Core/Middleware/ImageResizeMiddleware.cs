@@ -77,7 +77,7 @@ public sealed class ImageResizeMiddleware(
             // Handle conditional requests
             if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
                 !string.IsNullOrEmpty(etag) &&
-                ETagMatches(etag, result.CachedPath))
+                ETagMatches(etag!, result.CachedPath))
             {
                 ctx.Response.StatusCode = StatusCodes.Status304NotModified;
                 return;
@@ -85,7 +85,7 @@ public sealed class ImageResizeMiddleware(
 
             if (ctx.Request.Headers.TryGetValue("If-Modified-Since", out var ifModified) &&
                 !string.IsNullOrEmpty(ifModified) &&
-                LastModifiedMatches(ifModified, result.CachedPath))
+                LastModifiedMatches(ifModified!, result.CachedPath))
             {
                 ctx.Response.StatusCode = StatusCodes.Status304NotModified;
                 return;
@@ -199,7 +199,7 @@ public sealed class ImageResizeMiddleware(
             // Handle conditional requests
             if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
                 !string.IsNullOrEmpty(etag) &&
-                ETagMatches(etag, originalPath))
+                ETagMatches(etag!, originalPath))
             {
                 ctx.Response.StatusCode = StatusCodes.Status304NotModified;
                 return;
@@ -207,7 +207,7 @@ public sealed class ImageResizeMiddleware(
 
             if (ctx.Request.Headers.TryGetValue("If-Modified-Since", out var ifModified) &&
                 !string.IsNullOrEmpty(ifModified) &&
-                LastModifiedMatches(ifModified, originalPath))
+                LastModifiedMatches(ifModified!, originalPath))
             {
                 ctx.Response.StatusCode = StatusCodes.Status304NotModified;
                 return;

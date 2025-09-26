@@ -25,17 +25,17 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
     }
 
     /// <inheritdoc />
-    public async Task<bool> ExistsAsync(string cachedPath, CancellationToken ct = default)
+    public Task<bool> ExistsAsync(string cachedPath, CancellationToken ct = default)
     {
         var exists = File.Exists(cachedPath);
         logger.LogDebug("Cache file {Path} exists: {Exists}", cachedPath, exists);
-        return exists;
+        return Task.FromResult(exists);
     }
 
     /// <inheritdoc />
-    public async Task<Stream> OpenReadAsync(string cachedPath, CancellationToken ct = default)
+    public Task<Stream> OpenReadAsync(string cachedPath, CancellationToken ct = default)
     {
-        return File.OpenRead(cachedPath);
+        return Task.FromResult<Stream>(File.OpenRead(cachedPath));
     }
 
     /// <inheritdoc />
@@ -141,6 +141,8 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
                 }
             }
         }
+
+        await Task.CompletedTask;
     }
 
     private long GetCurrentCacheSize()

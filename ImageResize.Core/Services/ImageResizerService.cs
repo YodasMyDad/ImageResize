@@ -17,7 +17,6 @@ public sealed class ImageResizerService(
     ILogger<ImageResizerService> logger)
     : IImageResizerService
 {
-    private readonly IImageCodec _codec = codec;
     private readonly AsyncKeyedLocker _locker = new();
 
     /// <inheritdoc />
@@ -79,7 +78,7 @@ public sealed class ImageResizerService(
     }
 
     /// <inheritdoc />
-    public IImageCodec GetCodec() => _codec;
+    public IImageCodec GetCodec() => codec;
 
     /// <inheritdoc />
     public async Task<(Stream Stream, string ContentType, int Width, int Height)> ResizeToStreamAsync(
@@ -245,6 +244,7 @@ internal sealed class AsyncKeyedLocker
         {
             _asyncLock.Release();
             _locker.ReleaseLock(_key);
+            await Task.CompletedTask;
         }
 
         public void Dispose()
