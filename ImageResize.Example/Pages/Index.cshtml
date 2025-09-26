@@ -1,10 +1,68 @@
-﻿@page
+@page
 @model IndexModel
 @{
-    ViewData["Title"] = "Home page";
+    ViewData["Title"] = "Image Resize Demo";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<h1>@ViewData["Title"]</h1>
+
+<div class="row">
+    <div class="col-md-12">
+        <p>This page demonstrates the ImageResize library functionality by processing a sample image.</p>
+
+        @if (Model.ErrorMessage != null)
+        {
+            <div class="alert alert-danger">
+                <strong>Error:</strong> @Model.ErrorMessage
+            </div>
+        }
+        else if (Model.ProcessedImage != null)
+        {
+            <div class="alert alert-success">
+                <strong>Success!</strong> Image processed successfully.
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h5>Image Details</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row">
+                        <dt class="col-sm-3">Original Dimensions:</dt>
+                        <dd class="col-sm-9">@Model.ProcessedImage.OriginalWidth x @Model.ProcessedImage.OriginalHeight</dd>
+
+                        <dt class="col-sm-3">Final Dimensions:</dt>
+                        <dd class="col-sm-9">@Model.ProcessedImage.Width x @Model.ProcessedImage.Height</dd>
+
+                        <dt class="col-sm-3">File Size:</dt>
+                        <dd class="col-sm-9">@Model.ProcessedImage.FileSize bytes</dd>
+
+                        <dt class="col-sm-3">Content Type:</dt>
+                        <dd class="col-sm-9">@Model.ProcessedImage.ContentType</dd>
+
+                        <dt class="col-sm-3">File Extension:</dt>
+                        <dd class="col-sm-9">@Model.ProcessedImage.FileExtension</dd>
+
+                        <dt class="col-sm-3">Format:</dt>
+                        <dd class="col-sm-9">@Model.ProcessedImage.Format</dd>
+
+                        <dt class="col-sm-3">Was Resized:</dt>
+                        <dd class="col-sm-9">@(Model.ProcessedImage.WasResized ? "Yes" : "No")</dd>
+
+                        @if (Model.ProcessedImage.Quality.HasValue)
+                        {
+                            <dt class="col-sm-3">Quality:</dt>
+                            <dd class="col-sm-9">@Model.ProcessedImage.Quality</dd>
+                        }
+                    </dl>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-info">
+                <strong>Loading...</strong> Processing image...
+            </div>
+        }
+    </div>
 </div>

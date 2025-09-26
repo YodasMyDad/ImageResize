@@ -36,4 +36,9 @@ public interface IImageResizerService
         string? originalContentType,
         ResizeOptions options,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets the image codec used by this service for image processing operations.
+    /// </summary>
+    IImageCodec GetCodec();
 }

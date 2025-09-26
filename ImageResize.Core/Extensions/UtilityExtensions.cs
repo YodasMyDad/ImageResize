@@ -109,20 +109,7 @@ public static class UtilityExtensions
     /// </summary>
     private static IImageCodec GetCodec(this IImageResizerService resizerService)
     {
-        // For this compatibility layer, we'll create a codec instance with default options
-        // In production, you might want to register the codec as a service and inject it
-        var options = new Configuration.ImageResizeOptions
-        {
-            AllowUpscale = false,
-            DefaultQuality = 85,
-            PngCompressionLevel = 6
-        };
-
-        var codec = new SkiaCodec(
-            Options.Create(options),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<SkiaCodec>.Instance);
-
-        return codec;
+        return resizerService.GetCodec();
     }
 
     private static string GetFileExtensionFromContentType(string contentType)
