@@ -33,7 +33,7 @@ public class ImageResizeOptions
     /// <summary>
     /// Default quality when only width/height specified (JPEG/WebP).
     /// </summary>
-    public int DefaultQuality { get; set; } = 80;
+    public int DefaultQuality { get; set; } = 99;
 
     /// <summary>
     /// PNG compression level (0-9).
@@ -80,7 +80,7 @@ public class ImageResizeOptions
         public int MinHeight { get; set; } = 16;
         public int MaxHeight { get; set; } = 4096;
         public int MinQuality { get; set; } = 10;
-        public int MaxQuality { get; set; } = 95;
+        public int MaxQuality { get; set; } = 100;
     }
 
     /// <summary>

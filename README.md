@@ -111,12 +111,12 @@ GET /media/photos/cat.jpg
     "ContentRoot": "wwwroot/images",       // Directory containing original images
     "CacheRoot": "wwwroot/_imgcache",      // Directory for cached resized images
     "AllowUpscale": false,                 // Prevent enlarging images beyond original size
-    "DefaultQuality": 80,                  // Default JPEG/WebP quality (1-100)
+    "DefaultQuality": 99,                  // Default JPEG/WebP quality (1-100)
     "PngCompressionLevel": 6,              // PNG compression level (0-9)
     "Bounds": {
       "MinWidth": 16, "MaxWidth": 4096,    // Width limits in pixels
       "MinHeight": 16, "MaxHeight": 4096,  // Height limits in pixels
-      "MinQuality": 10, "MaxQuality": 95   // Quality limits (JPEG/WebP only)
+      "MinQuality": 10, "MaxQuality": 100  // Quality limits (JPEG/WebP only)
     },
     "HashOriginalContent": false,          // Include file content in cache key (slower but more accurate)
     "Cache": {

@@ -51,12 +51,14 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
             throw new InvalidOperationException("Unable to decode bitmap from image data");
 
         // Use high-quality cubic sampling for better resize quality
-        var samplingOptions = new SKSamplingOptions(SKCubicResampler.Mitchell);
+        var samplingOptions = new SKSamplingOptions(SKCubicResampler.CatmullRom);
         using var resized = bitmap.Resize(
-            new SKImageInfo(outW, outH, bitmap.ColorType, bitmap.AlphaType),
+            new SKImageInfo(outW, outH, SKColorType.Rgba8888, bitmap.AlphaType),
             samplingOptions);
 
-        using var image = SKImage.FromBitmap(resized);
+        // Apply subtle sharpening for smaller images to counteract downsampling softness
+        using var sharpened = ApplySharpeningIfNeeded(resized, info.Width, info.Height, outW, outH);
+        using var image = SKImage.FromBitmap(sharpened);
         var fmt = codec.EncodedFormat; // Keep original format
 
         var outStream = new MemoryStream();
@@ -65,16 +67,30 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         switch (fmt)
         {
             case SKEncodedImageFormat.Jpeg:
-                image.Encode(SKEncodedImageFormat.Jpeg, quality).SaveTo(outStream);
+                // Use high-quality JPEG encoding with better quality settings
+                using (var data = image.Encode(SKEncodedImageFormat.Jpeg, quality))
+                {
+                    data.SaveTo(outStream);
+                }
                 break;
             case SKEncodedImageFormat.Webp:
-                image.Encode(SKEncodedImageFormat.Webp, quality).SaveTo(outStream);
+                using (var data = image.Encode(SKEncodedImageFormat.Webp, quality))
+                {
+                    data.SaveTo(outStream);
+                }
                 break;
             case SKEncodedImageFormat.Png:
-                image.Encode(SKEncodedImageFormat.Png, options.Value.PngCompressionLevel).SaveTo(outStream);
+                // Use PNG with optimized settings for quality
+                using (var data = image.Encode(SKEncodedImageFormat.Png, Math.Min(3, options.Value.PngCompressionLevel)))
+                {
+                    data.SaveTo(outStream);
+                }
                 break;
             default:
-                image.Encode(fmt, quality).SaveTo(outStream);
+                using (var data = image.Encode(fmt, quality))
+                {
+                    data.SaveTo(outStream);
+                }
                 break;
         }
 
@@ -111,6 +127,35 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         return (outW, outH);
     }
 
+
+    private static SKBitmap ApplySharpeningIfNeeded(SKBitmap bitmap, int originalWidth, int originalHeight, int newWidth, int newHeight)
+    {
+        // Only apply sharpening when significantly downscaling (making much smaller images)
+        var scaleFactor = Math.Min((double)newWidth / originalWidth, (double)newHeight / originalHeight);
+        if (scaleFactor >= 0.5)
+        {
+            return bitmap; // No sharpening needed for minimal downscaling
+        }
+
+        // Create a new bitmap for the sharpened result
+        var sharpened = new SKBitmap(new SKImageInfo(bitmap.Width, bitmap.Height, bitmap.ColorType, bitmap.AlphaType));
+
+        using var canvas = new SKCanvas(sharpened);
+        using var paint = new SKPaint();
+
+        // Apply a simple sharpening effect using color matrix
+        var sharpenMatrix = new float[]
+        {
+            1.1f, -0.1f, -0.1f, 0, 0,
+            -0.1f, 1.1f, -0.1f, 0, 0,
+            -0.1f, -0.1f, 1.1f, 0, 0,
+            0, 0, 0, 1, 0
+        };
+
+        paint.ColorFilter = SKColorFilter.CreateColorMatrix(sharpenMatrix);
+        canvas.DrawBitmap(bitmap, 0, 0, paint);
+        return sharpened;
+    }
 
     private static string MimeFromEncodedFormat(SKEncodedImageFormat format) => format switch
     {
