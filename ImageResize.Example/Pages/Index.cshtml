@@ -4,11 +4,13 @@
     ViewData["Title"] = "Image Resize Demo";
 }
 
-<h1>@ViewData["Title"]</h1>
+<h1 class="mb-4">@ViewData["Title"]</h1>
 
 <div class="row">
     <div class="col-md-12">
-        <p>This page demonstrates the ImageResize library functionality by processing a sample image.</p>
+        <div class="alert alert-info mb-4">
+            <strong>Image Resize Demo:</strong> This page demonstrates the ImageResize library by showing the same image resized to three different sizes. Each version maintains the original aspect ratio while providing different quality levels for various use cases.
+        </div>
 
         @if (Model.ErrorMessage != null)
         {
@@ -16,53 +18,112 @@
                 <strong>Error:</strong> @Model.ErrorMessage
             </div>
         }
-        else if (Model.ProcessedImage != null)
+        else if (Model.ResizedImages != null && Model.ResizedImages.Any())
         {
-            <div class="alert alert-success">
-                <strong>Success!</strong> Image processed successfully.
+            <div class="row">
+                @foreach (var resizedImage in Model.ResizedImages)
+                {
+                    <div class="col-md-4 mb-4">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="card-title mb-0">@resizedImage.Title</h5>
+                            </div>
+                            <div class="card-body text-center">
+                                <img src="data:@resizedImage.Image.ContentType;base64,@Convert.ToBase64String(await GetImageBytesAsync(resizedImage.Image.Stream))"
+                                     alt="@resizedImage.Title image"
+                                     class="img-fluid rounded mb-3"
+                                     style="max-height: 250px; object-fit: contain;" />
+
+                                <p class="text-muted small mb-3">@resizedImage.Description</p>
+
+                                <div class="row text-start">
+                                    <div class="col-6">
+                                        <strong>Size:</strong><br />
+                                        <small class="text-muted">@resizedImage.SizeLabel</small>
+                                    </div>
+                                    <div class="col-6">
+                                        <strong>Quality:</strong><br />
+                                        <small class="text-muted">@resizedImage.Image.Quality%</small>
+                                    </div>
+                                    <div class="col-6">
+                                        <strong>File Size:</strong><br />
+                                        <small class="text-muted">@resizedImage.Image.FileSizeHumanReadable</small>
+                                    </div>
+                                    <div class="col-6">
+                                        <strong>Format:</strong><br />
+                                        <small class="text-muted">@resizedImage.Image.Format</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
             </div>
 
-            <div class="card">
+            <div class="card mt-4">
                 <div class="card-header">
-                    <h5>Image Details</h5>
+                    <h5>Original Image Information</h5>
                 </div>
                 <div class="card-body">
-                    <dl class="row">
-                        <dt class="col-sm-3">Original Dimensions:</dt>
-                        <dd class="col-sm-9">@Model.ProcessedImage.OriginalWidth x @Model.ProcessedImage.OriginalHeight</dd>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <dl class="row">
+                                <dt class="col-sm-5">Original Dimensions:</dt>
+                                <dd class="col-sm-7">@Model.ResizedImages.First().Image.OriginalWidth x @Model.ResizedImages.First().Image.OriginalHeight</dd>
 
-                        <dt class="col-sm-3">Final Dimensions:</dt>
-                        <dd class="col-sm-9">@Model.ProcessedImage.Width x @Model.ProcessedImage.Height</dd>
+                                <dt class="col-sm-5">Content Type:</dt>
+                                <dd class="col-sm-7">@Model.ResizedImages.First().Image.ContentType</dd>
 
-                        <dt class="col-sm-3">File Size:</dt>
-                        <dd class="col-sm-9">@Model.ProcessedImage.FileSize bytes</dd>
-
-                        <dt class="col-sm-3">Content Type:</dt>
-                        <dd class="col-sm-9">@Model.ProcessedImage.ContentType</dd>
-
-                        <dt class="col-sm-3">File Extension:</dt>
-                        <dd class="col-sm-9">@Model.ProcessedImage.FileExtension</dd>
-
-                        <dt class="col-sm-3">Format:</dt>
-                        <dd class="col-sm-9">@Model.ProcessedImage.Format</dd>
-
-                        <dt class="col-sm-3">Was Resized:</dt>
-                        <dd class="col-sm-9">@(Model.ProcessedImage.WasResized ? "Yes" : "No")</dd>
-
-                        @if (Model.ProcessedImage.Quality.HasValue)
-                        {
-                            <dt class="col-sm-3">Quality:</dt>
-                            <dd class="col-sm-9">@Model.ProcessedImage.Quality</dd>
-                        }
-                    </dl>
+                                <dt class="col-sm-5">Format:</dt>
+                                <dd class="col-sm-7">@Model.ResizedImages.First().Image.Format</dd>
+                            </dl>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Resize Comparison:</h6>
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Size</th>
+                                        <th>Dimensions</th>
+                                        <th>Quality</th>
+                                        <th>File Size</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var img in Model.ResizedImages)
+                                    {
+                                        <tr>
+                                            <td><strong>@img.Title</strong></td>
+                                            <td>@img.SizeLabel</td>
+                                            <td>@img.Image.Quality%</td>
+                                            <td>@img.Image.FileSizeHumanReadable</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         }
         else
         {
             <div class="alert alert-info">
-                <strong>Loading...</strong> Processing image...
+                <strong>Loading...</strong> Processing images...
             </div>
         }
     </div>
 </div>
+
+@{
+    async Task<byte[]> GetImageBytesAsync(Stream stream)
+    {
+        if (stream.CanSeek)
+        {
+            stream.Position = 0;
+        }
+        using var memoryStream = new MemoryStream();
+        await stream.CopyToAsync(memoryStream);
+        return memoryStream.ToArray();
+    }
+}
