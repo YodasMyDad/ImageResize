@@ -50,19 +50,17 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         if (bitmap == null)
             throw new InvalidOperationException("Unable to decode bitmap from image data");
 
-        // Preserve color space and use optimal color type for high quality output
-        var colorSpace = info.ColorSpace ?? SKColorSpace.CreateSrgb();
-        var colorType = bitmap.ColorType == SKColorType.Gray8 ? SKColorType.Gray8 : SKColorType.Rgba8888;
-        
-        // Use high-quality cubic sampling for better resize quality
-        var samplingOptions = new SKSamplingOptions(SKCubicResampler.CatmullRom);
+        // Use the highest quality resize with proper color handling
+        // Mitchell resampler provides sharper results than CatmullRom for downscaling
+        var samplingOptions = new SKSamplingOptions(SKCubicResampler.Mitchell);
         using var resized = bitmap.Resize(
-            new SKImageInfo(outW, outH, colorType, bitmap.AlphaType, colorSpace),
+            new SKImageInfo(outW, outH, bitmap.ColorType, bitmap.AlphaType, bitmap.ColorSpace),
             samplingOptions);
 
-        // Apply subtle sharpening for smaller images to counteract downsampling softness
-        using var sharpened = ApplySharpeningIfNeeded(resized, info.Width, info.Height, outW, outH);
-        using var image = SKImage.FromBitmap(sharpened);
+        if (resized == null)
+            throw new InvalidOperationException("Failed to resize image");
+
+        using var image = SKImage.FromBitmap(resized);
         var fmt = codec.EncodedFormat; // Keep original format
 
         var outStream = new MemoryStream();
@@ -130,41 +128,6 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         int outW = Math.Max(1, (int)Math.Round(srcW * scale));
         int outH = Math.Max(1, (int)Math.Round(srcH * scale));
         return (outW, outH);
-    }
-
-
-    private static SKBitmap ApplySharpeningIfNeeded(SKBitmap bitmap, int originalWidth, int originalHeight, int newWidth, int newHeight)
-    {
-        // Apply subtle sharpening when downscaling to counteract resampling blur
-        var scaleFactor = Math.Min((double)newWidth / originalWidth, (double)newHeight / originalHeight);
-        if (scaleFactor >= 0.9)
-        {
-            return bitmap; // No sharpening for minimal/no resize
-        }
-
-        // Create a new bitmap for the sharpened result, preserving color space
-        var sharpened = new SKBitmap(new SKImageInfo(bitmap.Width, bitmap.Height, bitmap.ColorType, bitmap.AlphaType, bitmap.ColorSpace));
-
-        using var canvas = new SKCanvas(sharpened);
-        using var paint = new SKPaint
-        {
-            IsAntialias = true
-        };
-
-        // Apply adaptive sharpening based on scale factor
-        // More aggressive for smaller scales, subtle for moderate scales
-        var sharpenStrength = scaleFactor < 0.5 ? 0.15f : 0.08f;
-        var sharpenMatrix = new float[]
-        {
-            1 + sharpenStrength * 2, -sharpenStrength, -sharpenStrength, 0, 0,
-            -sharpenStrength, 1 + sharpenStrength * 2, -sharpenStrength, 0, 0,
-            -sharpenStrength, -sharpenStrength, 1 + sharpenStrength * 2, 0, 0,
-            0, 0, 0, 1, 0
-        };
-
-        paint.ColorFilter = SKColorFilter.CreateColorMatrix(sharpenMatrix);
-        canvas.DrawBitmap(bitmap, 0, 0, paint);
-        return sharpened;
     }
 
     private static string MimeFromEncodedFormat(SKEncodedImageFormat format) => format switch
