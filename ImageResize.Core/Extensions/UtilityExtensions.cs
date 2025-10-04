@@ -12,12 +12,119 @@ namespace ImageResize.Core.Extensions;
 public static class UtilityExtensions
 {
     /// <summary>
-    /// Extension method to check if image exceeds max pixel size and resize if needed.
-    /// Equivalent to the ImageSharp OverMaxSizeCheck extension method.
+    /// Extension method to check if image exceeds max dimension and resize if needed.
+    /// This overload accepts a maximum width OR height - the image will be resized to fit within this dimension while maintaining aspect ratio.
     /// </summary>
+    /// <param name="imageStream">The image stream to check and resize</param>
+    /// <param name="maxDimension">Maximum width OR height in pixels (whichever is larger will be constrained to this value)</param>
+    /// <param name="resizerService">The resizer service to use</param>
+    /// <param name="contentType">Optional content type of the image</param>
+    /// <param name="ct">Cancellation token</param>
     public static async Task<ImageResult> OverMaxSizeCheckAsync(
         this Stream imageStream,
-        int maxPixelSize,
+        int maxDimension,
+        IImageResizerService resizerService,
+        string? contentType = null,
+        CancellationToken ct = default)
+    {
+        // Handle non-seekable streams (like BrowserFileStream) by buffering to MemoryStream
+        Stream workingStream = imageStream;
+        bool isBufferedStream = false;
+
+        if (!imageStream.CanSeek)
+        {
+            var memoryStream = new MemoryStream();
+            await imageStream.CopyToAsync(memoryStream, ct);
+            memoryStream.Position = 0;
+            workingStream = memoryStream;
+            isBufferedStream = true;
+        }
+        else
+        {
+            workingStream.Position = 0;
+        }
+
+        try
+        {
+            // First, probe the image to get original dimensions
+            var codec = resizerService.GetCodec();
+            var (width, height, detectedContentType) = await codec.ProbeAsync(workingStream, ct);
+
+            // Reset stream position after probing (only if seekable)
+            if (workingStream.CanSeek)
+            {
+                workingStream.Position = 0;
+            }
+
+            // Check if resizing is needed - if both dimensions are within max, no resize needed
+            var maxCurrentDimension = Math.Max(width, height);
+            if (maxCurrentDimension <= maxDimension)
+            {
+                // No resize needed, return the stream
+                var streamLength = workingStream.Length;
+                var detectedType = detectedContentType ?? contentType ?? "application/octet-stream";
+                var fileExt = GetFileExtensionFromContentType(detectedType);
+                var imgFormat = GetFormatFromContentType(detectedType);
+
+                var resultStream = isBufferedStream ? workingStream : imageStream;
+                if (!isBufferedStream && imageStream.CanSeek)
+                {
+                    imageStream.Position = 0;
+                }
+
+                return new ImageResult(resultStream, width, height, detectedType,
+                                       streamLength, fileExt, imgFormat, width, height, null, false);
+            }
+
+            // Calculate scale factor based on the larger dimension
+            var scaleFactor = (double)maxDimension / maxCurrentDimension;
+            var newWidth = (int)Math.Round(width * scaleFactor);
+            var newHeight = (int)Math.Round(height * scaleFactor);
+
+            // Ensure we don't exceed maxDimension due to rounding
+            if (newWidth > maxDimension)
+                newWidth = maxDimension;
+            if (newHeight > maxDimension)
+                newHeight = maxDimension;
+
+            // Ensure dimensions are at least 1 pixel
+            newWidth = Math.Max(1, newWidth);
+            newHeight = Math.Max(1, newHeight);
+
+            // Resize the image
+            var options = new ResizeOptions(Width: newWidth, Height: newHeight, Quality: null);
+            var (resizedStream, resultContentType, resultWidth, resultHeight) =
+                await resizerService.ResizeToStreamAsync(workingStream, contentType, options, ct);
+
+            var resizedLength = resizedStream.Length;
+            var resultExt = GetFileExtensionFromContentType(resultContentType);
+            var resultFormat = GetFormatFromContentType(resultContentType);
+
+            return new ImageResult(resizedStream, resultWidth, resultHeight, resultContentType,
+                                   resizedLength, resultExt, resultFormat, width, height, options.Quality, true);
+        }
+        finally
+        {
+            // Clean up buffered stream if we created one and it's not being returned
+            if (isBufferedStream && workingStream != null)
+            {
+                // Don't dispose here - it will be disposed by the caller via ImageResult
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extension method to check if image exceeds max total pixel count and resize if needed.
+    /// This overload accepts total pixels (width × height).
+    /// </summary>
+    /// <param name="imageStream">The image stream to check and resize</param>
+    /// <param name="maxPixelCount">Maximum total pixel count (width × height)</param>
+    /// <param name="resizerService">The resizer service to use</param>
+    /// <param name="contentType">Optional content type of the image</param>
+    /// <param name="ct">Cancellation token</param>
+    public static async Task<ImageResult> OverMaxSizeCheckByPixelCountAsync(
+        this Stream imageStream,
+        long maxPixelCount,
         IImageResizerService resizerService,
         string? contentType = null,
         CancellationToken ct = default)
@@ -55,7 +162,7 @@ public static class UtilityExtensions
 
             // Check if resizing is needed based on total pixel count
             var totalPixels = (long)width * height;
-            if (totalPixels <= maxPixelSize)
+            if (totalPixels <= maxPixelCount)
             {
                 // No resize needed, return the stream
                 var streamLength = workingStream.Length;
@@ -76,13 +183,13 @@ public static class UtilityExtensions
             }
 
             // Determine resize dimensions to fit within max pixel count while maintaining aspect ratio
-            // Calculate the scale factor needed to reduce total pixels to maxPixelSize
-            var scaleFactor = Math.Sqrt((double)maxPixelSize / totalPixels);
+            // Calculate the scale factor needed to reduce total pixels to maxPixelCount
+            var scaleFactor = Math.Sqrt((double)maxPixelCount / totalPixels);
             var newWidth = (int)Math.Round(width * scaleFactor);
             var newHeight = (int)Math.Round(height * scaleFactor);
             
-            // Due to rounding, we might exceed maxPixelSize - adjust if needed
-            while (newWidth * newHeight > maxPixelSize && (newWidth > 1 || newHeight > 1))
+            // Due to rounding, we might exceed maxPixelCount - adjust if needed
+            while (newWidth * newHeight > maxPixelCount && (newWidth > 1 || newHeight > 1))
             {
                 // Reduce the larger dimension by 1
                 if (newWidth >= newHeight && newWidth > 1)
