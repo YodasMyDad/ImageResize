@@ -12,6 +12,59 @@
             <strong>Image Resize Demo:</strong> This page demonstrates the ImageResize middleware by showing how to serve dynamically resized images using URL query parameters. Each image is resized on-demand by the middleware and cached for optimal performance.
         </div>
 
+        @if (!string.IsNullOrEmpty(Model.UploadError))
+        {
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <strong>Error:</strong> @Model.UploadError
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        }
+
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-upload"></i> Try Your Own Image
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Upload your own image to see how it looks at different sizes and quality settings. The image will be processed through the same ImageResize middleware.
+                </p>
+
+                <form method="post" enctype="multipart/form-data" class="mb-3">
+                    <div class="row align-items-end">
+                        <div class="col-md-8">
+                            <label for="uploadedImage" class="form-label">Select an image file</label>
+                            <input type="file" 
+                                   class="form-control" 
+                                   id="uploadedImage" 
+                                   name="UploadedImage" 
+                                   accept="image/*" 
+                                   required />
+                            <small class="text-muted">Supported formats: JPG, PNG, GIF, WebP, BMP, TIFF (Max 10MB)</small>
+                        </div>
+                        <div class="col-md-4">
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-upload"></i> Upload & Resize
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                @if (Model.IsCustomImage)
+                {
+                    <div class="alert alert-success mb-0">
+                        <strong>Custom Image Active!</strong> You're now viewing your uploaded image.
+                        <form method="post" asp-page-handler="Reset" class="d-inline">
+                            <button type="submit" class="btn btn-sm btn-outline-success ms-2">
+                                <i class="bi bi-arrow-clockwise"></i> Reset to Default
+                            </button>
+                        </form>
+                    </div>
+                }
+            </div>
+        </div>
+
         @if (Model.ResizedImages != null && Model.ResizedImages.Any())
         {
             <div class="row">

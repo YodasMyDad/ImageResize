@@ -5,5 +5,7 @@ riderModule.iml
 /_ReSharper.Caches/
 /.idea/*
 /ImageResize.Example/wwwroot/_imgcache/*
+/ImageResize.Example/wwwroot/uploads/*
 /ImageResize.sln.DotSettings.user
 /nupkgs/*
+/ImageResize.Example/wwwroot/images/uploads/*
