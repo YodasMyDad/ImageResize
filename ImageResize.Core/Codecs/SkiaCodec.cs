@@ -50,10 +50,14 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         if (bitmap == null)
             throw new InvalidOperationException("Unable to decode bitmap from image data");
 
+        // Preserve color space and use optimal color type for high quality output
+        var colorSpace = info.ColorSpace ?? SKColorSpace.CreateSrgb();
+        var colorType = bitmap.ColorType == SKColorType.Gray8 ? SKColorType.Gray8 : SKColorType.Rgba8888;
+        
         // Use high-quality cubic sampling for better resize quality
         var samplingOptions = new SKSamplingOptions(SKCubicResampler.CatmullRom);
         using var resized = bitmap.Resize(
-            new SKImageInfo(outW, outH, SKColorType.Rgba8888, bitmap.AlphaType),
+            new SKImageInfo(outW, outH, colorType, bitmap.AlphaType, colorSpace),
             samplingOptions);
 
         // Apply subtle sharpening for smaller images to counteract downsampling softness
@@ -80,8 +84,9 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
                 }
                 break;
             case SKEncodedImageFormat.Png:
-                // Use PNG with optimized settings for quality
-                using (var data = image.Encode(SKEncodedImageFormat.Png, Math.Min(3, options.Value.PngCompressionLevel)))
+                // PNG quality parameter is compression level (0-9), doesn't affect visual quality
+                // Use configured compression level (higher = smaller file, slightly slower)
+                using (var data = image.Encode(SKEncodedImageFormat.Png, options.Value.PngCompressionLevel))
                 {
                     data.SaveTo(outStream);
                 }
@@ -130,25 +135,30 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
 
     private static SKBitmap ApplySharpeningIfNeeded(SKBitmap bitmap, int originalWidth, int originalHeight, int newWidth, int newHeight)
     {
-        // Only apply sharpening when significantly downscaling (making much smaller images)
+        // Apply subtle sharpening when downscaling to counteract resampling blur
         var scaleFactor = Math.Min((double)newWidth / originalWidth, (double)newHeight / originalHeight);
-        if (scaleFactor >= 0.5)
+        if (scaleFactor >= 0.9)
         {
-            return bitmap; // No sharpening needed for minimal downscaling
+            return bitmap; // No sharpening for minimal/no resize
         }
 
-        // Create a new bitmap for the sharpened result
-        var sharpened = new SKBitmap(new SKImageInfo(bitmap.Width, bitmap.Height, bitmap.ColorType, bitmap.AlphaType));
+        // Create a new bitmap for the sharpened result, preserving color space
+        var sharpened = new SKBitmap(new SKImageInfo(bitmap.Width, bitmap.Height, bitmap.ColorType, bitmap.AlphaType, bitmap.ColorSpace));
 
         using var canvas = new SKCanvas(sharpened);
-        using var paint = new SKPaint();
+        using var paint = new SKPaint
+        {
+            IsAntialias = true
+        };
 
-        // Apply a simple sharpening effect using color matrix
+        // Apply adaptive sharpening based on scale factor
+        // More aggressive for smaller scales, subtle for moderate scales
+        var sharpenStrength = scaleFactor < 0.5 ? 0.15f : 0.08f;
         var sharpenMatrix = new float[]
         {
-            1.1f, -0.1f, -0.1f, 0, 0,
-            -0.1f, 1.1f, -0.1f, 0, 0,
-            -0.1f, -0.1f, 1.1f, 0, 0,
+            1 + sharpenStrength * 2, -sharpenStrength, -sharpenStrength, 0, 0,
+            -sharpenStrength, 1 + sharpenStrength * 2, -sharpenStrength, 0, 0,
+            -sharpenStrength, -sharpenStrength, 1 + sharpenStrength * 2, 0, 0,
             0, 0, 0, 1, 0
         };
 

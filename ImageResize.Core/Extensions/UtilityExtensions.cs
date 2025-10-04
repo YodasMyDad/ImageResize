@@ -35,6 +35,11 @@ public static class UtilityExtensions
             workingStream = memoryStream;
             isBufferedStream = true;
         }
+        else
+        {
+            // Reset seekable stream to beginning
+            workingStream.Position = 0;
+        }
 
         try
         {
@@ -48,8 +53,9 @@ public static class UtilityExtensions
                 workingStream.Position = 0;
             }
 
-            // Check if resizing is needed
-            if (width <= maxPixelSize && height <= maxPixelSize)
+            // Check if resizing is needed based on total pixel count
+            var totalPixels = (long)width * height;
+            if (totalPixels <= maxPixelSize)
             {
                 // No resize needed, return the stream
                 var streamLength = workingStream.Length;
@@ -69,18 +75,27 @@ public static class UtilityExtensions
                                        streamLength, fileExt, imgFormat, width, height, null, false);
             }
 
-            // Determine resize dimensions (maintain aspect ratio)
-            int newWidth, newHeight;
-            if (width > height)
+            // Determine resize dimensions to fit within max pixel count while maintaining aspect ratio
+            // Calculate the scale factor needed to reduce total pixels to maxPixelSize
+            var scaleFactor = Math.Sqrt((double)maxPixelSize / totalPixels);
+            var newWidth = (int)Math.Round(width * scaleFactor);
+            var newHeight = (int)Math.Round(height * scaleFactor);
+            
+            // Due to rounding, we might exceed maxPixelSize - adjust if needed
+            while (newWidth * newHeight > maxPixelSize && (newWidth > 1 || newHeight > 1))
             {
-                newWidth = maxPixelSize;
-                newHeight = (int)Math.Round((double)height * maxPixelSize / width);
+                // Reduce the larger dimension by 1
+                if (newWidth >= newHeight && newWidth > 1)
+                    newWidth--;
+                else if (newHeight > 1)
+                    newHeight--;
+                else
+                    break;
             }
-            else
-            {
-                newHeight = maxPixelSize;
-                newWidth = (int)Math.Round((double)width * maxPixelSize / height);
-            }
+            
+            // Ensure dimensions are at least 1 pixel
+            newWidth = Math.Max(1, newWidth);
+            newHeight = Math.Max(1, newHeight);
 
             // Resize the image
             var options = new ResizeOptions(Width: newWidth, Height: newHeight, Quality: null);

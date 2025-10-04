@@ -91,12 +91,16 @@ public class OverMaxSizeCheckTests
         result.ContentType.ShouldBe("image/jpeg");
         result.Format.ShouldBe("JPEG");
 
-        // The resized image should be smaller
-        var maxDimension = Math.Max(result.Width, result.Height);
-        maxDimension.ShouldBeLessThanOrEqualTo(1000); // Should fit within 1000x1000
+        // Check aspect ratio is maintained (4:3)
+        var aspectRatio = (double)result.Width / result.Height;
+        aspectRatio.ShouldBeInRange(1.32, 1.34); // ~4:3 aspect ratio
 
         // Total pixels should be <= 1,000,000
         result.PixelCount.ShouldBeLessThanOrEqualTo(1_000_000);
+        
+        // Image should be smaller than original
+        result.Width.ShouldBeLessThan(2000);
+        result.Height.ShouldBeLessThan(1500);
     }
 
     [Test]
