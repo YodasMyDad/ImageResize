@@ -10,6 +10,8 @@ This sample demonstrates the ImageResize middleware for ASP.NET Core.
 
 ### Middleware Usage
 ```
+GET /images/sample.jpg?width=800&height=600&quality=80
+GET /img/sample.jpg?width=800&height=600&quality=80
 GET /media/sample.jpg?width=800&height=600&quality=80
 ```
 

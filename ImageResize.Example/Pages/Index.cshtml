@@ -145,8 +145,9 @@
                     </div>
 
                     <div class="alert alert-info mt-3">
-                        <strong>How it works:</strong> When you visit any of these URLs, the middleware intercepts the request,
-                        resizes the original image (<code>wwwroot/images/sample.jpg</code>) on-demand, caches the result,
+                        <strong>How it works:</strong> When you visit any of these URLs, the middleware intercepts requests
+                        to configured paths (<code>/images/</code>, <code>/img/</code>, <code>/media/</code>), resizes the image
+                        on-demand from its actual location (e.g., <code>wwwroot/images/sample.jpg</code>), caches the result,
                         and serves the optimized version. Subsequent requests for the same size/quality are served from cache.
                     </div>
                 </div>

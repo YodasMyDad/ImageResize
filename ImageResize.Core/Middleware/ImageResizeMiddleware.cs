@@ -26,21 +26,31 @@ public sealed class ImageResizeMiddleware(
             return;
         }
 
-        if (!ctx.Request.Path.StartsWithSegments(opts.Value.RequestPathPrefix, out var remainder))
+        // Check if request path starts with any of the configured content roots
+        var requestPath = ctx.Request.Path.Value?.TrimStart('/') ?? string.Empty;
+        if (string.IsNullOrEmpty(requestPath))
         {
             await next(ctx);
             return;
         }
 
-        var relPath = remainder.Value?.TrimStart('/');
-        if (string.IsNullOrEmpty(relPath))
+        var matchingRoot = opts.Value.ContentRoots
+            .FirstOrDefault(root =>
+            {
+                var rootPath = root.TrimStart('/');
+                // Must match at path boundary: either exact match or followed by '/'
+                return requestPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase) ||
+                       requestPath.StartsWith(rootPath + "/", StringComparison.OrdinalIgnoreCase);
+            });
+
+        if (matchingRoot is null)
         {
             await next(ctx);
             return;
         }
 
         // Check allowed extensions
-        var ext = Path.GetExtension(relPath).ToLowerInvariant();
+        var ext = Path.GetExtension(requestPath).ToLowerInvariant();
         if (!opts.Value.AllowedExtensions.Contains(ext))
         {
             await next(ctx);
@@ -55,14 +65,14 @@ public sealed class ImageResizeMiddleware(
         if (w is null && h is null)
         {
             // No resize parameters provided, serve original image
-            await ServeOriginalImageAsync(ctx, relPath);
+            await ServeOriginalImageAsync(ctx, requestPath);
             return;
         }
 
         // Validate bounds
         if (!ValidateBounds(w, h, q, out var problem))
         {
-            log.LogWarning("Invalid resize parameters for {Path}: {Problem}", relPath, problem);
+            log.LogWarning("Invalid resize parameters for {Path}: {Problem}", requestPath, problem);
             ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
             await ctx.Response.WriteAsync(problem!);
             return;
@@ -72,7 +82,7 @@ public sealed class ImageResizeMiddleware(
 
         try
         {
-            var result = await svc.EnsureResizedAsync(relPath, options, ctx.RequestAborted);
+            var result = await svc.EnsureResizedAsync(requestPath, options, ctx.RequestAborted);
 
             // Handle conditional requests
             if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
@@ -107,7 +117,7 @@ public sealed class ImageResizeMiddleware(
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "Error resizing image {Path}", relPath);
+            log.LogError(ex, "Error resizing image {Path}", requestPath);
             ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
         }
     }
@@ -234,11 +244,11 @@ public sealed class ImageResizeMiddleware(
     private string ResolveOriginalPath(string relativePath)
     {
         // Security: Prevent path traversal
-        var fullPath = Path.GetFullPath(Path.Combine(opts.Value.ContentRoot, relativePath));
+        var fullPath = Path.GetFullPath(Path.Combine(opts.Value.WebRoot, relativePath));
 
-        // Ensure the resolved path is within ContentRoot
-        var contentRootFull = Path.GetFullPath(opts.Value.ContentRoot);
-        if (!fullPath.StartsWith(contentRootFull, StringComparison.OrdinalIgnoreCase))
+        // Ensure the resolved path is within WebRoot
+        var webRootFull = Path.GetFullPath(opts.Value.WebRoot);
+        if (!fullPath.StartsWith(webRootFull, StringComparison.OrdinalIgnoreCase))
         {
             throw new UnauthorizedAccessException("Path traversal attempt detected");
         }

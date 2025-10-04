@@ -38,7 +38,7 @@ public static class ImageResizeServiceCollectionExtensions
         return services.AddImageResize(options =>
         {
             // Set default paths relative to web root
-            options.ContentRoot = Path.Combine(environment.WebRootPath ?? "wwwroot", "images");
+            options.WebRoot = environment.WebRootPath ?? "wwwroot";
             options.CacheRoot = Path.Combine(environment.WebRootPath ?? "wwwroot", "_imgcache");
         });
     }

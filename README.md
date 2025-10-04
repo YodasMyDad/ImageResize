@@ -48,38 +48,49 @@ app.Run();
 ```csharp
 builder.Services.AddImageResize(o =>
 {
-    o.RequestPathPrefix = "/media";           // URL prefix to monitor (e.g., /media/*)
-    o.ContentRoot = Path.Combine(builder.Environment.WebRootPath, "images");  // Where original images are stored
+    o.ContentRoots = ["img", "images", "media"];  // URL path prefixes to monitor
+    o.WebRoot = builder.Environment.WebRootPath;  // Where original images are stored (wwwroot)
     o.CacheRoot = Path.Combine(builder.Environment.WebRootPath, "_imgcache"); // Where resized images are cached
-    o.AllowUpscale = false;                  // Don't enlarge images beyond original size
-    o.DefaultQuality = 85;                   // Default JPEG/WebP quality
-    o.PngCompressionLevel = 6;               // PNG compression (0-9)
-    o.Backend = ImageBackend.SkiaSharp;      // Image processing backend
-    o.Cache.MaxCacheBytes = 1073741824;      // 1GB cache limit (0 = unlimited)
-    o.Cache.PruneOnStartup = true;           // Clean old cache files on app start
+    o.AllowUpscale = false;                       // Don't enlarge images beyond original size
+    o.DefaultQuality = 85;                        // Default JPEG/WebP quality
+    o.PngCompressionLevel = 6;                    // PNG compression (0-9)
+    o.Backend = ImageBackend.SkiaSharp;           // Image processing backend
+    o.Cache.MaxCacheBytes = 1073741824;           // 1GB cache limit (0 = unlimited)
+    o.Cache.PruneOnStartup = true;                // Clean old cache files on app start
 });
 ```
 
 ### URL Structure and File System Mapping
 
-The middleware intercepts requests under the configured `RequestPathPrefix` (default: `/media`) and maps them to files on disk. Here's how it works:
+The middleware intercepts requests that start with any of the configured `ContentRoots` (default: `["img", "images", "media"]`) and serves images from their actual paths. Here's how it works:
 
 **URL Pattern:**
 ```
-/media/{relative-path-to-image}?width={width}&height={height}&quality={quality}
+/{content-root-path}/{image-path}?width={width}&height={height}&quality={quality}
 ```
 
 **File System Mapping:**
-- **Original Images**: Stored in `ContentRoot` (default: `wwwroot/images/`)
+- **Original Images**: Served from their actual location in `WebRoot` (default: `wwwroot/`)
 - **Cached Resized Images**: Stored in `CacheRoot` (default: `wwwroot/_imgcache/`)
 
-**Example:**
-- Request: `GET /media/photos/cat.jpg?width=800`
-- Original file: `wwwroot/images/photos/cat.jpg`
-- Cached file: `wwwroot/_imgcache/{hash}/cat.jpg` (with sharding like `ab/cd/{hash}.jpg`)
+**Examples:**
+- Request: `GET /img/photos/cat.jpg?width=800`
+  - Original file: `wwwroot/img/photos/cat.jpg`
+  - Cached file: `wwwroot/_imgcache/{hash}/cat.jpg`
+
+- Request: `GET /images/banner.png?width=1920&height=600`
+  - Original file: `wwwroot/images/banner.png`
+  - Cached file: `wwwroot/_imgcache/{hash}/banner.png`
+
+- Request: `GET /media/inner/photo.jpg?width=300`
+  - Original file: `wwwroot/media/inner/photo.jpg`
+  - Cached file: `wwwroot/_imgcache/{hash}/photo.jpg`
+
+- Request: `GET /assets/logo.png?width=200` → **Ignored** (not in ContentRoots)
 
 **Key Points:**
-- The `/media` prefix is **not** a real folder - it's just a URL route that the middleware intercepts
+- Images are served from their **actual paths** - no URL masking or rewriting
+- Only paths starting with configured `ContentRoots` are processed for resizing
 - Original images remain untouched in their original location
 - Resized images are automatically cached in a separate folder for performance
 - Cache uses SHA1 hashing with folder sharding to prevent filesystem issues with many files
@@ -88,16 +99,24 @@ The middleware intercepts requests under the configured `RequestPathPrefix` (def
 
 ```bash
 # Resize to 800px width (preserves aspect ratio)
-GET /media/photos/cat.jpg?width=800
+GET /images/photos/cat.jpg?width=800
 
 # Fit within 800x600 box
-GET /media/photos/cat.jpg?width=800&height=600
+GET /img/photos/cat.jpg?width=800&height=600
 
 # Resize with quality control
 GET /media/photos/cat.jpg?height=1080&quality=85
 
 # Serve original image (no resize parameters)
-GET /media/photos/cat.jpg
+GET /images/photos/cat.jpg
+
+# Different content roots work independently
+GET /img/banner.jpg?width=1920
+GET /images/logo.png?width=200
+GET /media/video-thumbnail.jpg?width=640
+
+# Paths not in ContentRoots are ignored
+GET /assets/icon.png?width=128  # Ignored, served by static files middleware
 ```
 
 ## Configuration
@@ -107,8 +126,8 @@ GET /media/photos/cat.jpg
 {
   "ImageResize": {
     "EnableMiddleware": true,              // Enable/disable the middleware
-    "RequestPathPrefix": "/media",         // URL prefix to monitor for image requests
-    "ContentRoot": "wwwroot/images",       // Directory containing original images
+    "ContentRoots": ["img", "images", "media"], // URL path prefixes to monitor
+    "WebRoot": "wwwroot",                  // Root directory containing original images
     "CacheRoot": "wwwroot/_imgcache",      // Directory for cached resized images
     "AllowUpscale": false,                 // Prevent enlarging images beyond original size
     "DefaultQuality": 99,                  // Default JPEG/WebP quality (1-100)

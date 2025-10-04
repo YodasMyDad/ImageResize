@@ -147,11 +147,11 @@ public sealed class ImageResizerService(
     private string ResolveOriginalPath(string relativePath)
     {
         // Security: Prevent path traversal
-        var fullPath = Path.GetFullPath(Path.Combine(options.Value.ContentRoot, relativePath));
+        var fullPath = Path.GetFullPath(Path.Combine(options.Value.WebRoot, relativePath));
 
-        // Ensure the resolved path is within ContentRoot
-        var contentRootFull = Path.GetFullPath(options.Value.ContentRoot);
-        if (!fullPath.StartsWith(contentRootFull, StringComparison.OrdinalIgnoreCase))
+        // Ensure the resolved path is within WebRoot
+        var webRootFull = Path.GetFullPath(options.Value.WebRoot);
+        if (!fullPath.StartsWith(webRootFull, StringComparison.OrdinalIgnoreCase))
         {
             throw new UnauthorizedAccessException("Path traversal attempt detected");
         }

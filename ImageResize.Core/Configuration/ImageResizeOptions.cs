@@ -11,14 +11,15 @@ public class ImageResizeOptions
     public bool EnableMiddleware { get; set; } = true;
 
     /// <summary>
-    /// URL prefix under which to intercept resize requests.
+    /// URL path prefixes to monitor for image resize requests.
+    /// Images will be served from their actual paths (e.g., /img/photo.jpg, /images/banner.png).
     /// </summary>
-    public string RequestPathPrefix { get; set; } = "/media";
+    public List<string> ContentRoots { get; set; } = ["img", "images", "media"];
 
     /// <summary>
-    /// Root directory where original images are located.
+    /// Root directory where original images are located (typically wwwroot).
     /// </summary>
-    public string ContentRoot { get; set; } = "wwwroot";
+    public string WebRoot { get; set; } = "wwwroot";
 
     /// <summary>
     /// Root directory where resized images are cached.

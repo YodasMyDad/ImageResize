@@ -30,7 +30,7 @@ public class OverMaxSizeCheckTests
     {
         _options = new ImageResizeOptions
         {
-            ContentRoot = Path.GetTempPath(),
+            WebRoot = Path.GetTempPath(),
             CacheRoot = Path.Combine(Path.GetTempPath(), "cache"),
             AllowUpscale = false,
             DefaultQuality = 85,

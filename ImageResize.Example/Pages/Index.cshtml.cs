@@ -118,6 +118,6 @@ public class IndexModel(IWebHostEnvironment env, ILogger<IndexModel> logger) : P
 
     private static string GetImagePath(string? image)
     {
-        return string.IsNullOrEmpty(image) ? "/media/sample.jpg" : $"/media/{image}";
+        return string.IsNullOrEmpty(image) ? "/images/sample.jpg" : $"/images/{image}";
     }
 }

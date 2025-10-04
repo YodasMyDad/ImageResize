@@ -11,5 +11,15 @@
         <!--<PackageReference Include="ImageResize" Version="1.0.0" />-->
     </ItemGroup>
 
+    <ItemGroup>
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\23\bf\2986c8cf35acd7a62512d2fabf65a7696f5d.jpg" />
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\51\dc\98569c1fc4a51bbd51981acf74ba7e65cf84.jpg" />
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\6e\1c\9a0196ba3a95b08c119d37261f0ebeb07416.jpg" />
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\8a\50\af69c292740303cdd1e2d816adfb99242a0f.jpg" />
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\a1\f4\f5560f3861bfe2d7bc033c3a60bc114c7045.jpg" />
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\aa\5f\b69058d977bc67aea84970e3c7d05ec1ca33.jpg" />
+      <_ContentIncludedByDefault Remove="wwwroot\_imgcache\bf\00\78393050431f848d0fbb97c1c4998305fc2c.jpg" />
+    </ItemGroup>
+
     
 </Project>
