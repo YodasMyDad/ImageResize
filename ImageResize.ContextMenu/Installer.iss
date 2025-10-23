@@ -1,6 +1,10 @@
 ; ImageResize Context Menu - Inno Setup Script
 ; This creates a proper Windows installer (.exe)
 
+#ifndef Platform
+  #define Platform "x64"
+#endif
+
 #define MyAppName "ImageResize Context Menu"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "ImageResize"
@@ -22,21 +26,26 @@ LicenseFile=..\LICENSE.txt
 ; Require admin rights for registry modifications
 PrivilegesRequired=admin
 OutputDir=..\publish\installer
-OutputBaseFilename=ImageResize-ContextMenu-Setup-{#MyAppVersion}
+OutputBaseFilename=ImageResize-ContextMenu-{#Platform}
 ; SetupIconFile=Assets\icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 ; Minimum Windows 10 version 1809
 MinVersion=10.0.17763
+#if Platform == "x64"
 ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
+#else
+ArchitecturesAllowed=x86 x64compatible
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Install the built application files
-Source: "..\publish\x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\publish\{#Platform}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
