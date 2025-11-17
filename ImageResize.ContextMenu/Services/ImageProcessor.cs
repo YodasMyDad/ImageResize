@@ -75,8 +75,13 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
             targetHeight = settings.TargetHeight;
         }
 
-        // Read and resize image
-        await using var inputStream = File.OpenRead(imagePath);
+        // Read input file into memory first to avoid file locking issues when overwriting
+        var inputData = new MemoryStream();
+        await using (var fileStream = File.OpenRead(imagePath))
+        {
+            await fileStream.CopyToAsync(inputData);
+        }
+        inputData.Position = 0;
         
         var resizeOptions = new ResizeOptions(
             Width: targetWidth,
@@ -84,9 +89,9 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
             Quality: settings.Quality
         );
 
-        using var result = await resizerService.ResizeAsync(inputStream, null, resizeOptions, CancellationToken.None);
+        using var result = await resizerService.ResizeAsync(inputData, null, resizeOptions, CancellationToken.None);
 
-        // Write to output
+        // Write to output - input file is now fully closed, safe to overwrite
         await using var outputStream = File.Create(outputPath);
         result.Stream.Position = 0;
         await result.Stream.CopyToAsync(outputStream);

@@ -4,7 +4,7 @@ A minimal, cross-platform image resize middleware for .NET Core that provides a 
 
 [![NuGet](https://img.shields.io/nuget/v/ImageResize.svg)](https://www.nuget.org/packages/ImageResize/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![.NET](https://img.shields.io/badge/.NET-9.0-blue.svg)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-10.0-blue.svg)](https://dotnet.microsoft.com/)
 
 ## Projects
 

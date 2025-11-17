@@ -6,7 +6,7 @@
 #endif
 
 #define MyAppName "ImageResize Context Menu"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "3.0.0"
 #define MyAppPublisher "ImageResize"
 #define MyAppURL "https://github.com/YodasMyDad/ImageResize"
 #define MyAppExeName "ImageResize.ContextMenu.exe"
@@ -107,7 +107,7 @@ Root: HKCR; Subkey: "*\shell\ResizeImage"; ValueType: string; ValueName: "Icon";
 Root: HKCR; Subkey: "*\shell\ResizeImage\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" %*"
 
 [Code]
-// Check for .NET 9.0 Runtime
+// Check for .NET 10.0 Runtime
 function IsDotNetInstalled(): Boolean;
 var
   ResultCode: Integer;
@@ -125,12 +125,12 @@ begin
   // Check if .NET is installed
   if not IsDotNetInstalled() then
   begin
-    if MsgBox('.NET 9.0 Runtime is required but not found.' + #13#10 + #13#10 +
+    if MsgBox('.NET 10 Runtime is required but not found.' + #13#10 + #13#10 +
               'Would you like to download it now?' + #13#10 + #13#10 +
               'The installer will open the download page in your browser.', 
               mbConfirmation, MB_YESNO) = IDYES then
     begin
-      ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/9.0', '', '', SW_SHOW, ewNoWait, ResultCode);
+      ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/10.0', '', '', SW_SHOW, ewNoWait, ResultCode);
     end;
     Result := False;
   end;

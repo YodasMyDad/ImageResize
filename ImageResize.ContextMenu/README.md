@@ -123,7 +123,7 @@ This will:
 
 Edit `Installer.iss` to customize:
 
-- **Application version** (line 5): `#define MyAppVersion "1.0.0"`
+- **Application version** (line 5): `#define MyAppVersion "3.0.0"`
 - **Company name** (line 6): `#define MyAppPublisher "Your Name"`
 - **Website URL** (line 7): `#define MyAppURL "https://..."`
 - **Icon** (line 26): `SetupIconFile=Assets\icon.ico`
