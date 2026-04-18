@@ -19,11 +19,10 @@ namespace ImageResize.Core.Extensions;
 public static class ImageResizeServiceCollectionExtensions
 {
     /// <summary>
-    /// Adds ImageResize services to the service collection with default configuration.
+    /// Adds ImageResize services bound to the <c>ImageResize</c> configuration section.
     /// </summary>
     public static IServiceCollection AddImageResize(this WebApplicationBuilder builder)
     {
-        // Configure options from appsettings
         builder.Services.Configure<ImageResizeOptions>(
             builder.Configuration.GetSection("ImageResize"));
 
@@ -31,24 +30,26 @@ public static class ImageResizeServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds ImageResize services to the service collection with default configuration.
+    /// Adds ImageResize services, defaulting <see cref="ImageResizeOptions.WebRoot"/> and
+    /// <see cref="ImageResizeOptions.CacheRoot"/> from the host environment.
     /// </summary>
     public static IServiceCollection AddImageResize(this IServiceCollection services, IWebHostEnvironment environment)
-    {
-        return services.AddImageResize(options =>
+        => services.AddImageResize(options =>
         {
-            // Set default paths relative to web root
             options.WebRoot = environment.WebRootPath ?? "wwwroot";
             options.CacheRoot = Path.Combine(environment.WebRootPath ?? "wwwroot", "_imgcache");
         });
-    }
 
     /// <summary>
-    /// Adds ImageResize services to the service collection.
+    /// Adds ImageResize services with an optional configuration callback.
     /// </summary>
     public static IServiceCollection AddImageResize(this IServiceCollection services, Action<ImageResizeOptions>? configure = null)
     {
-        // Register core services - options will be resolved from DI with configuration binding
+        services.AddOptions<ImageResizeOptions>()
+            .ValidateOnStart();
+
+        services.AddSingleton<IValidateOptions<ImageResizeOptions>, ImageResizeOptionsValidator>();
+
         services.AddSingleton<IImageCache, FileSystemImageCache>();
         services.AddSingleton<IImageCodec>(sp =>
         {
@@ -64,14 +65,10 @@ public static class ImageResizeServiceCollectionExtensions
         });
         services.AddSingleton<IImageResizerService, ImageResizerService>();
 
-        // Add startup cache pruning service
         services.AddHostedService<CachePruningHostedService>();
 
-        // Apply additional configuration if provided
         if (configure is not null)
-        {
             services.Configure(configure);
-        }
 
         return services;
     }
@@ -80,22 +77,21 @@ public static class ImageResizeServiceCollectionExtensions
     /// Adds ImageResize middleware to the application pipeline.
     /// </summary>
     public static IApplicationBuilder UseImageResize(this IApplicationBuilder app)
-    {
-        return app.UseMiddleware<ImageResizeMiddleware>();
-    }
+        => app.UseMiddleware<ImageResizeMiddleware>();
 }
 
 /// <summary>
-/// Hosted service that performs cache pruning on application startup.
+/// Hosted service that sweeps orphaned <c>.tmp</c> files and (optionally) prunes the cache on
+/// application startup.
 /// </summary>
 internal sealed class CachePruningHostedService(IImageCache cache) : IHostedService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         if (cache is FileSystemImageCache fsCache)
-        {
-            await Task.Run(() => fsCache.PruneCacheOnStartup(), cancellationToken);
-        }
+            return Task.Run(() => fsCache.PruneCacheOnStartup(), cancellationToken);
+
+        return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

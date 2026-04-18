@@ -5,11 +5,11 @@ param(
     [Parameter(Mandatory=$false)]
     [ValidateSet('x64', 'x86', 'ARM64', 'Both')]
     [string]$Platform = 'Both',
-    
+
     [Parameter(Mandatory=$false)]
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
-    
+
     [Parameter(Mandatory=$false)]
     [switch]$SkipInnoSetup
 )
@@ -20,6 +20,19 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = Join-Path $ScriptDir "ImageResize.ContextMenu"
 $InstallerDir = Join-Path $ScriptDir "publish\installer"
+
+# Resolve the marketing version from Directory.Build.props so the installer filename and the
+# Inno Setup define stay in lockstep with the assemblies.
+$PropsPath = Join-Path $ScriptDir "Directory.Build.props"
+try {
+    [xml]$PropsXml = Get-Content $PropsPath
+    $Version = ($PropsXml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+    if (-not $Version) { throw "Version not found in Directory.Build.props" }
+} catch {
+    Write-Host "ERROR: could not read Version from $PropsPath" -ForegroundColor Red
+    throw
+}
+Write-Host "Version: $Version" -ForegroundColor Yellow
 
 # Determine which platforms to build
 $PlatformsToBuild = @()
@@ -168,9 +181,9 @@ if (-not $SkipInnoSetup) {
         
         foreach ($CurrentPlatform in $BuiltPlatforms) {
             Write-Host "Building installer for $CurrentPlatform..." -ForegroundColor Cyan
-            
-            # Run Inno Setup compiler with platform define
-            & $ISCC "/DPlatform=$CurrentPlatform" $InnoScript
+
+            # Run Inno Setup compiler with platform + version defines
+            & $ISCC "/DPlatform=$CurrentPlatform" "/DMyAppVersion=$Version" $InnoScript
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "Installer created successfully for $CurrentPlatform!" -ForegroundColor Green

@@ -5,5 +5,6 @@ public sealed class ResizeProgress
     public int CurrentFile { get; set; }
     public int TotalFiles { get; set; }
     public string FileName { get; set; } = string.Empty;
+    public TimeSpan Elapsed { get; set; }
+    public TimeSpan Eta { get; set; }
 }
-

@@ -1,5 +1,6 @@
 using ImageResize.Core.Configuration;
 using ImageResize.Core.Interfaces;
+using ImageResize.Core.Utilities;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -7,17 +8,22 @@ using Microsoft.Extensions.Options;
 namespace ImageResize.Core.Cache;
 
 /// <summary>
-/// File system-based image cache with atomic writes and folder sharding.
+/// File-system-backed image cache with atomic writes and folder sharding.
 /// </summary>
 public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, ILogger<FileSystemImageCache> logger)
     : IImageCache
 {
+    private const string TempSuffix = ".tmp";
     private readonly object _cacheLock = new();
 
     /// <inheritdoc />
-    public string GetCachedFilePath(string relPath, ResizeOptions options1, string sourceSignature)
+    public string GetCachedFilePath(string relPath, ResizeOptions resizeOptions, string sourceSignature)
     {
-        var cacheKey = GenerateCacheKey(relPath, options1, sourceSignature);
+        ArgumentNullException.ThrowIfNull(relPath);
+        ArgumentNullException.ThrowIfNull(resizeOptions);
+        ArgumentNullException.ThrowIfNull(sourceSignature);
+
+        var cacheKey = GenerateCacheKey(relPath, resizeOptions, sourceSignature);
         var shardedPath = GetShardedPath(cacheKey);
         var extension = Path.GetExtension(relPath).ToLowerInvariant();
 
@@ -34,62 +40,73 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
 
     /// <inheritdoc />
     public Task<Stream> OpenReadAsync(string cachedPath, CancellationToken ct = default)
-    {
-        return Task.FromResult<Stream>(File.OpenRead(cachedPath));
-    }
+        => Task.FromResult<Stream>(File.OpenRead(cachedPath));
 
     /// <inheritdoc />
     public async Task WriteAtomicallyAsync(string cachedPath, Stream data, CancellationToken ct = default)
     {
-        // Ensure cache directory exists
         var directory = Path.GetDirectoryName(cachedPath)!;
         Directory.CreateDirectory(directory);
 
-        // Check cache size limits before writing
         var dataSize = data.Length;
-        await EnforceCacheSizeLimitAsync(dataSize, ct);
+        await EnforceCacheSizeLimitAsync(dataSize, ct).ConfigureAwait(false);
 
-        // Write to temporary file first
-        var tempPath = cachedPath + ".tmp";
+        var tempPath = cachedPath + TempSuffix;
 
         try
         {
-            await using var tempFile = File.Create(tempPath);
-            await data.CopyToAsync(tempFile, ct);
-            await tempFile.FlushAsync(ct);
-        }
-        catch
-        {
-            // Clean up temp file on failure
-            if (File.Exists(tempPath))
+            await using (var tempFile = File.Create(tempPath))
             {
-                File.Delete(tempPath);
+                await data.CopyToAsync(tempFile, ct).ConfigureAwait(false);
+                await tempFile.FlushAsync(ct).ConfigureAwait(false);
             }
+
+            File.Move(tempPath, cachedPath, overwrite: true);
+        }
+        catch (OperationCanceledException)
+        {
+            TryDeleteTemp(tempPath);
             throw;
         }
-
-        // Atomic move/rename
-        File.Move(tempPath, cachedPath, overwrite: true);
+        catch (IOException ex)
+        {
+            logger.LogWarning(ex, "I/O failure writing cache file {Path}", cachedPath);
+            TryDeleteTemp(tempPath);
+            throw;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogError(ex, "Permission denied writing cache file {Path}", cachedPath);
+            TryDeleteTemp(tempPath);
+            throw;
+        }
 
         logger.LogDebug("Atomically wrote cache file {Path} ({Size} bytes)", cachedPath, dataSize);
     }
 
-    private string GenerateCacheKey(string relPath, ResizeOptions options1, string sourceSignature)
+    private static void TryDeleteTemp(string tempPath)
     {
-        // Normalize path for consistent keying
+        try
+        {
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
+        catch (IOException) { /* best effort */ }
+        catch (UnauthorizedAccessException) { /* best effort */ }
+    }
+
+    private string GenerateCacheKey(string relPath, ResizeOptions resizeOptions, string sourceSignature)
+    {
         var normalizedPath = Path.GetFullPath(relPath)
             .Replace(Path.DirectorySeparatorChar, '/')
             .ToLowerInvariant()
             .TrimStart('/');
 
-        var optionsPart = $"w={options1.Width ?? 0},h={options1.Height ?? 0},q={options1.Quality ?? options.Value.DefaultQuality},up={options.Value.AllowUpscale}";
+        var optionsPart = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"w={resizeOptions.Width ?? 0},h={resizeOptions.Height ?? 0},q={resizeOptions.Quality ?? options.Value.DefaultQuality},up={options.Value.AllowUpscale}");
         var keyInput = $"{normalizedPath}|{optionsPart}|{sourceSignature}";
 
-        using var sha1 = System.Security.Cryptography.SHA1.Create();
-        var hashBytes = sha1.ComputeHash(System.Text.Encoding.UTF8.GetBytes(keyInput));
-        var hashString = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
-
-        return hashString;
+        return HashingUtilities.HashStringToHex(keyInput);
     }
 
     private string GetShardedPath(string cacheKey)
@@ -97,7 +114,7 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
         if (options.Value.Cache.FolderSharding <= 0)
             return cacheKey;
 
-        var sharding = options.Value.Cache.FolderSharding * 2; // 2 chars per level
+        var sharding = options.Value.Cache.FolderSharding * 2;
         if (cacheKey.Length < sharding)
             return cacheKey;
 
@@ -105,9 +122,7 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
         for (var i = 0; i < sharding; i += 2)
         {
             if (i + 2 <= cacheKey.Length)
-            {
                 parts.Add(cacheKey.Substring(i, 2));
-            }
         }
 
         parts.Add(cacheKey[sharding..]);
@@ -126,7 +141,6 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
             if (currentSize + newFileSize <= maxCacheBytes)
                 return;
 
-            // Need to clean up old files
             var filesToDelete = GetFilesToDelete(currentSize + newFileSize - maxCacheBytes);
             foreach (var file in filesToDelete)
             {
@@ -135,14 +149,18 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
                     File.Delete(file);
                     logger.LogDebug("Deleted cache file {Path} to enforce size limit", file);
                 }
-                catch (Exception ex)
+                catch (IOException ex)
                 {
                     logger.LogWarning(ex, "Failed to delete cache file {Path}", file);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    logger.LogWarning(ex, "Permission denied deleting cache file {Path}", file);
                 }
             }
         }
 
-        await Task.CompletedTask;
+        await Task.CompletedTask.ConfigureAwait(false);
     }
 
     private long GetCurrentCacheSize()
@@ -155,9 +173,14 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
             return Directory.EnumerateFiles(options.Value.CacheRoot, "*", SearchOption.AllDirectories)
                 .Sum(file => new FileInfo(file).Length);
         }
-        catch (Exception ex)
+        catch (IOException ex)
         {
-            logger.LogWarning(ex, "Failed to calculate current cache size");
+            logger.LogWarning(ex, "I/O error calculating current cache size");
+            return 0;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogWarning(ex, "Permission denied calculating current cache size");
             return 0;
         }
     }
@@ -169,10 +192,9 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
 
         try
         {
-            // Get all cache files sorted by last access time (oldest first)
             var files = Directory.EnumerateFiles(options.Value.CacheRoot, "*", SearchOption.AllDirectories)
                 .Select(file => new FileInfo(file))
-                .Where(fi => !fi.Name.EndsWith(".tmp")) // Don't delete temp files
+                .Where(fi => !fi.Name.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(fi => fi.LastAccessTimeUtc)
                 .ToList();
 
@@ -190,18 +212,28 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
 
             return filesToDelete;
         }
-        catch (Exception ex)
+        catch (IOException ex)
         {
-            logger.LogWarning(ex, "Failed to determine files to delete for cache cleanup");
+            logger.LogWarning(ex, "I/O error determining files to delete for cache cleanup");
+            return [];
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogWarning(ex, "Permission denied determining files to delete for cache cleanup");
             return [];
         }
     }
 
     /// <summary>
-    /// Prunes the cache by deleting old files if PruneOnStartup is enabled.
+    /// Prunes the cache by deleting the oldest files and sweeping any orphaned <c>.tmp</c>
+    /// files left behind by a previous crashed write. Invoked on startup when
+    /// <see cref="ImageResizeOptions.CacheOptions.PruneOnStartup"/> is enabled; the <c>.tmp</c>
+    /// sweep runs unconditionally and is always safe.
     /// </summary>
     public void PruneCacheOnStartup()
     {
+        SweepOrphanedTempFiles();
+
         if (!options.Value.Cache.PruneOnStartup)
             return;
 
@@ -211,9 +243,9 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
         {
             var filesToDelete = Directory.EnumerateFiles(options.Value.CacheRoot, "*", SearchOption.AllDirectories)
                 .Select(file => new FileInfo(file))
-                .Where(fi => !fi.Name.EndsWith(".tmp")) // Don't delete temp files
+                .Where(fi => !fi.Name.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(fi => fi.LastAccessTimeUtc)
-                .Take(100) // Delete oldest 100 files
+                .Take(100)
                 .Select(fi => fi.FullName)
                 .ToList();
 
@@ -224,17 +256,55 @@ public sealed class FileSystemImageCache(IOptions<ImageResizeOptions> options, I
                     File.Delete(file);
                     logger.LogDebug("Pruned cache file {Path}", file);
                 }
-                catch (Exception ex)
+                catch (IOException ex)
                 {
                     logger.LogWarning(ex, "Failed to prune cache file {Path}", file);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    logger.LogWarning(ex, "Permission denied pruning cache file {Path}", file);
                 }
             }
 
             logger.LogInformation("Cache pruning completed, deleted {Count} files", filesToDelete.Count);
         }
-        catch (Exception ex)
+        catch (IOException ex)
         {
             logger.LogError(ex, "Cache pruning failed");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogError(ex, "Cache pruning failed (permission)");
+        }
+    }
+
+    private void SweepOrphanedTempFiles()
+    {
+        var root = options.Value.CacheRoot;
+        if (!Directory.Exists(root))
+            return;
+
+        var threshold = DateTime.UtcNow.AddHours(-1);
+        try
+        {
+            foreach (var tmp in Directory.EnumerateFiles(root, "*" + TempSuffix, SearchOption.AllDirectories))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(tmp) < threshold)
+                        File.Delete(tmp);
+                }
+                catch (IOException) { /* best effort */ }
+                catch (UnauthorizedAccessException) { /* best effort */ }
+            }
+        }
+        catch (IOException ex)
+        {
+            logger.LogDebug(ex, "Temp-file sweep failed under {Root}", root);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogDebug(ex, "Temp-file sweep denied under {Root}", root);
         }
     }
 }

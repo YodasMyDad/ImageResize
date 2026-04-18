@@ -1,7 +1,6 @@
-using System.IO;
-using System.Security.Cryptography;
 using ImageResize.Core.Configuration;
 using ImageResize.Core.Interfaces;
+using ImageResize.Core.Utilities;
 using ImageResize.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -12,69 +11,71 @@ namespace ImageResize.Core.Middleware;
 /// <summary>
 /// Middleware for handling image resize requests.
 /// </summary>
-public sealed class ImageResizeMiddleware(
+public sealed partial class ImageResizeMiddleware(
     RequestDelegate next,
     IOptions<ImageResizeOptions> opts,
     IImageResizerService svc,
     ILogger<ImageResizeMiddleware> log)
 {
+    /// <summary>
+    /// Entry point called by the ASP.NET Core request pipeline.
+    /// </summary>
     public async Task InvokeAsync(HttpContext ctx)
     {
         if (!opts.Value.EnableMiddleware)
         {
-            await next(ctx);
+            await next(ctx).ConfigureAwait(false);
             return;
         }
 
-        // Check if request path starts with any of the configured content roots
         var requestPath = ctx.Request.Path.Value?.TrimStart('/') ?? string.Empty;
         if (string.IsNullOrEmpty(requestPath))
         {
-            await next(ctx);
+            await next(ctx).ConfigureAwait(false);
             return;
         }
 
-        var matchingRoot = opts.Value.ContentRoots
-            .FirstOrDefault(root =>
-            {
-                var rootPath = root.TrimStart('/');
-                // Must match at path boundary: either exact match or followed by '/'
-                return requestPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase) ||
-                       requestPath.StartsWith(rootPath + "/", StringComparison.OrdinalIgnoreCase);
-            });
+        var matchingRoot = opts.Value.ContentRoots.FirstOrDefault(root =>
+        {
+            var rootPath = root.TrimStart('/');
+            return requestPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase) ||
+                   requestPath.StartsWith(rootPath + "/", StringComparison.OrdinalIgnoreCase);
+        });
 
         if (matchingRoot is null)
         {
-            await next(ctx);
+            await next(ctx).ConfigureAwait(false);
             return;
         }
 
-        // Check allowed extensions
         var ext = Path.GetExtension(requestPath).ToLowerInvariant();
         if (!opts.Value.AllowedExtensions.Contains(ext))
         {
-            await next(ctx);
+            await next(ctx).ConfigureAwait(false);
             return;
         }
 
-        // Parse and validate query parameters
-        int? w = TryParseInt(ctx.Request.Query["width"]);
-        int? h = TryParseInt(ctx.Request.Query["height"]);
-        int? q = TryParseInt(ctx.Request.Query["quality"]);
+        using var _ = log.BeginScope(new Dictionary<string, object?>
+        {
+            ["TraceId"] = ctx.TraceIdentifier,
+            ["RequestPath"] = requestPath,
+        });
+
+        var w = TryParseInt(ctx.Request.Query["width"]);
+        var h = TryParseInt(ctx.Request.Query["height"]);
+        var q = TryParseInt(ctx.Request.Query["quality"]);
 
         if (w is null && h is null)
         {
-            // No resize parameters provided, serve original image
-            await ServeOriginalImageAsync(ctx, requestPath);
+            await ServeOriginalImageAsync(ctx, requestPath).ConfigureAwait(false);
             return;
         }
 
-        // Validate bounds
         if (!ValidateBounds(w, h, q, out var problem))
         {
-            log.LogWarning("Invalid resize parameters for {Path}: {Problem}", requestPath, problem);
+            LogInvalidParameters(requestPath, problem!);
             ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await ctx.Response.WriteAsync(problem!);
+            await ctx.Response.WriteAsync(problem!, ctx.RequestAborted).ConfigureAwait(false);
             return;
         }
 
@@ -82,32 +83,20 @@ public sealed class ImageResizeMiddleware(
 
         try
         {
-            var result = await svc.EnsureResizedAsync(requestPath, options, ctx.RequestAborted);
+            var result = await svc.EnsureResizedAsync(requestPath, options, ctx.RequestAborted).ConfigureAwait(false);
 
-            // Handle conditional requests
-            if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
-                !string.IsNullOrEmpty(etag) &&
-                ETagMatches(etag!, result.CachedPath))
+            if (ClientHasFreshCopy(ctx.Request, result.CachedPath))
             {
                 ctx.Response.StatusCode = StatusCodes.Status304NotModified;
                 return;
             }
 
-            if (ctx.Request.Headers.TryGetValue("If-Modified-Since", out var ifModified) &&
-                !string.IsNullOrEmpty(ifModified) &&
-                LastModifiedMatches(ifModified!, result.CachedPath))
-            {
-                ctx.Response.StatusCode = StatusCodes.Status304NotModified;
-                return;
-            }
-
-            // Serve the cached file
             ctx.Response.ContentType = result.ContentType;
             ApplyCacheHeaders(ctx.Response, result.CachedPath);
 
             await using var fs = File.OpenRead(result.CachedPath);
             ctx.Response.ContentLength = fs.Length;
-            await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
+            await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted).ConfigureAwait(false);
 
             log.LogDebug("Served resized image {Path} ({Size} bytes)", result.CachedPath, fs.Length);
         }
@@ -115,17 +104,29 @@ public sealed class ImageResizeMiddleware(
         {
             ctx.Response.StatusCode = StatusCodes.Status404NotFound;
         }
-        catch (Exception ex)
+        catch (UnauthorizedAccessException ex)
         {
-            log.LogError(ex, "Error resizing image {Path}", requestPath);
+            log.LogWarning(ex, "Path traversal or permission error for {Path}", requestPath);
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        }
+        catch (OperationCanceledException) when (ctx.RequestAborted.IsCancellationRequested)
+        {
+            // Client disconnect — nothing to do, don't treat as server error.
+        }
+        catch (InvalidOperationException ex)
+        {
+            log.LogWarning(ex, "Bad image input for {Path}", requestPath);
+            ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        }
+        catch (IOException ex)
+        {
+            log.LogError(ex, "I/O error resizing {Path}", requestPath);
             ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
         }
     }
 
     private static int? TryParseInt(string? value)
-    {
-        return int.TryParse(value, out var result) ? result : null;
-    }
+        => int.TryParse(value, out var result) ? result : null;
 
     private bool ValidateBounds(int? width, int? height, int? quality, out string? problem)
     {
@@ -151,39 +152,50 @@ public sealed class ImageResizeMiddleware(
         return true;
     }
 
-    private static bool ETagMatches(string etag, string filePath)
+    private static bool ClientHasFreshCopy(HttpRequest request, string filePath)
     {
-        var fileEtag = GenerateETag(filePath);
-        return etag.Contains(fileEtag, StringComparison.Ordinal);
+        if (request.Headers.TryGetValue("If-None-Match", out var etag) &&
+            !string.IsNullOrEmpty(etag) &&
+            ETagMatches(etag!, filePath))
+        {
+            return true;
+        }
+
+        if (request.Headers.TryGetValue("If-Modified-Since", out var ifModified) &&
+            !string.IsNullOrEmpty(ifModified) &&
+            LastModifiedMatches(ifModified!, filePath))
+        {
+            return true;
+        }
+
+        return false;
     }
+
+    private static bool ETagMatches(string etag, string filePath)
+        => etag.Contains(HashingUtilities.ComputeFileETag(filePath), StringComparison.Ordinal);
 
     private static bool LastModifiedMatches(string ifModified, string filePath)
     {
-        if (!DateTime.TryParse(ifModified, out var clientDate))
+        if (!DateTime.TryParse(ifModified, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var clientDate))
+        {
             return false;
+        }
 
         var fileDate = File.GetLastWriteTimeUtc(filePath);
-        return clientDate >= fileDate;
-    }
-
-    private static string GenerateETag(string filePath)
-    {
-        using var sha1 = SHA1.Create();
-        var hashBytes = sha1.ComputeHash(System.Text.Encoding.UTF8.GetBytes(filePath));
-        return $"\"{BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant()}\"";
+        // Strip sub-second precision — HTTP dates are second-resolution
+        var fileDateTrim = new DateTime(fileDate.Year, fileDate.Month, fileDate.Day, fileDate.Hour, fileDate.Minute, fileDate.Second, DateTimeKind.Utc);
+        return clientDate >= fileDateTrim;
     }
 
     private void ApplyCacheHeaders(HttpResponse response, string filePath)
     {
         if (opts.Value.ResponseCache.SendETag)
-        {
-            response.Headers["ETag"] = GenerateETag(filePath);
-        }
+            response.Headers["ETag"] = HashingUtilities.ComputeFileETag(filePath);
 
         if (opts.Value.ResponseCache.SendLastModified)
-        {
             response.Headers["Last-Modified"] = File.GetLastWriteTimeUtc(filePath).ToString("R");
-        }
 
         response.Headers["Cache-Control"] = $"public, max-age={opts.Value.ResponseCache.ClientCacheSeconds}";
         response.Headers["Vary"] = "width, height, quality";
@@ -193,7 +205,6 @@ public sealed class ImageResizeMiddleware(
     {
         try
         {
-            // Resolve and validate the original file path
             var originalPath = ResolveOriginalPath(relativePath);
 
             if (!File.Exists(originalPath))
@@ -202,57 +213,45 @@ public sealed class ImageResizeMiddleware(
                 return;
             }
 
-            // Get file info and content type
             var fileInfo = new FileInfo(originalPath);
             var contentType = GetContentTypeFromPath(originalPath);
 
-            // Handle conditional requests
-            if (ctx.Request.Headers.TryGetValue("If-None-Match", out var etag) &&
-                !string.IsNullOrEmpty(etag) &&
-                ETagMatches(etag!, originalPath))
+            if (ClientHasFreshCopy(ctx.Request, originalPath))
             {
                 ctx.Response.StatusCode = StatusCodes.Status304NotModified;
                 return;
             }
 
-            if (ctx.Request.Headers.TryGetValue("If-Modified-Since", out var ifModified) &&
-                !string.IsNullOrEmpty(ifModified) &&
-                LastModifiedMatches(ifModified!, originalPath))
-            {
-                ctx.Response.StatusCode = StatusCodes.Status304NotModified;
-                return;
-            }
-
-            // Set response headers
             ctx.Response.ContentType = contentType;
             ctx.Response.ContentLength = fileInfo.Length;
             ApplyCacheHeaders(ctx.Response, originalPath);
 
-            // Serve the file
             await using var fs = File.OpenRead(originalPath);
-            await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
+            await fs.CopyToAsync(ctx.Response.Body, ctx.RequestAborted).ConfigureAwait(false);
 
             log.LogDebug("Served original image {Path} ({Size} bytes)", originalPath, fileInfo.Length);
         }
-        catch (Exception ex)
+        catch (UnauthorizedAccessException ex)
         {
-            log.LogError(ex, "Error serving original image {Path}", relativePath);
+            log.LogWarning(ex, "Path traversal or permission error serving {Path}", relativePath);
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        }
+        catch (OperationCanceledException) when (ctx.RequestAborted.IsCancellationRequested)
+        {
+        }
+        catch (IOException ex)
+        {
+            log.LogError(ex, "I/O error serving original {Path}", relativePath);
             ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
         }
     }
 
     private string ResolveOriginalPath(string relativePath)
     {
-        // Security: Prevent path traversal
         var fullPath = Path.GetFullPath(Path.Combine(opts.Value.WebRoot, relativePath));
-
-        // Ensure the resolved path is within WebRoot
         var webRootFull = Path.GetFullPath(opts.Value.WebRoot);
         if (!fullPath.StartsWith(webRootFull, StringComparison.OrdinalIgnoreCase))
-        {
             throw new UnauthorizedAccessException("Path traversal attempt detected");
-        }
-
         return fullPath;
     }
 
@@ -270,4 +269,8 @@ public sealed class ImageResizeMiddleware(
             _ => "application/octet-stream"
         };
     }
+
+    [LoggerMessage(EventId = 1001, Level = LogLevel.Warning,
+        Message = "Invalid resize parameters for {Path}: {Problem}")]
+    partial void LogInvalidParameters(string path, string problem);
 }

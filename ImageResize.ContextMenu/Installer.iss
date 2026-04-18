@@ -6,7 +6,11 @@
 #endif
 
 #define MyAppName "ImageResize Context Menu"
-#define MyAppVersion "3.0.0"
+; Read the version out of the built exe so there's one source of truth (Directory.Build.props).
+; build-installer.ps1 also passes -DMyAppVersion=x.y.z as a safety net for CI / offline builds.
+#ifndef MyAppVersion
+  #define MyAppVersion GetFileVersion("..\publish\" + Platform + "\ImageResize.ContextMenu.exe")
+#endif
 #define MyAppPublisher "ImageResize"
 #define MyAppURL "https://github.com/YodasMyDad/ImageResize"
 #define MyAppExeName "ImageResize.ContextMenu.exe"
@@ -26,7 +30,7 @@ LicenseFile=..\LICENSE.txt
 ; Require admin rights for registry modifications
 PrivilegesRequired=admin
 OutputDir=..\publish\installer
-OutputBaseFilename=ImageResize-ContextMenu-{#Platform}
+OutputBaseFilename=ImageResize-ContextMenu-Setup-{#MyAppVersion}-{#Platform}
 ; SetupIconFile=Assets\icon.ico
 Compression=lzma
 SolidCompression=yes

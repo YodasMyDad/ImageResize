@@ -1,30 +1,41 @@
-using ImageResize.ContextMenu.Models;
-using ImageResize.ContextMenu.Services;
 using System.Collections;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
+using ImageResize.ContextMenu.Models;
+using ImageResize.ContextMenu.Services;
+using Microsoft.CSharp.RuntimeBinder;
 
 namespace ImageResize.ContextMenu;
 
 public partial class MainWindow : Window
 {
+    private static readonly Regex NumberOnly = new("[^0-9]+", RegexOptions.Compiled);
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"
+    };
+
     private readonly ImageProcessor _imageProcessor;
-    private List<string> _imagePaths = [];
+    private readonly List<string> _imagePaths = [];
     private int _originalWidth;
     private int _originalHeight;
     private bool _isUpdatingFromSlider;
     private bool _isUpdatingFromTextBox;
     private bool _isMultipleImages;
+    private CancellationTokenSource? _cts;
+    private bool _resizeInProgress;
 
     public MainWindow(ImageProcessor imageProcessor)
     {
         InitializeComponent();
         _imageProcessor = imageProcessor;
 
-        Loaded += async (s, e) => await InitializeAsync();
+        Title = $"Resize Images — v{VersionInfo.AppVersion}";
+
+        Loaded += async (_, _) => await InitializeAsync().ConfigureAwait(false);
     }
 
     private async Task InitializeAsync()
@@ -32,127 +43,117 @@ public partial class MainWindow : Window
         try
         {
             var args = Environment.GetCommandLineArgs();
-            try
-            {
-                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ImageResize", "ContextMenu");
-                Directory.CreateDirectory(dir);
-                File.AppendAllText(Path.Combine(dir, "log.txt"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] InitializeAsync args: {args?.Length ?? 0} First='{args?.Skip(1).FirstOrDefault() ?? ""}'{Environment.NewLine}");
-            }
-            catch { }
 
-            _imagePaths = (args ?? Array.Empty<string>()).Skip(1)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
+            var initial = (args ?? [])
+                .Skip(1)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
                 .Where(File.Exists)
                 .Where(IsImageFile)
                 .ToList();
 
-            if (_imagePaths.Count == 0)
-            {
-                var explorerPaths = GetSelectedExplorerImagePaths();
-                if (explorerPaths.Count > 0)
-                {
-                    _imagePaths = explorerPaths;
-                }
-                try
-                {
-                    var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ImageResize", "ContextMenu");
-                    Directory.CreateDirectory(dir);
-                    File.AppendAllText(Path.Combine(dir, "log.txt"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Explorer selection fallback: {_imagePaths.Count}{Environment.NewLine}");
-                }
-                catch { }
-            }
+            if (initial.Count == 0)
+                initial = GetSelectedExplorerImagePaths();
 
-            if (_imagePaths.Count == 0)
+            if (initial.Count == 0)
             {
-                ShowError("No valid image files were provided. Please select images and use the context menu.");
-                ResizeButton.IsEnabled = false;
+                Dispatcher.Invoke(() =>
+                {
+                    ShowInfo("No valid image files were provided. Please select images and use the context menu, or drag images onto this window.");
+                    ResizeButton.IsEnabled = false;
+                });
                 return;
             }
 
+            _imagePaths.AddRange(initial);
             _isMultipleImages = _imagePaths.Count > 1;
 
-            var firstImagePath = _imagePaths[0];
-            var imageInfo = await _imageProcessor.GetImageInfoAsync(firstImagePath);
+            var imageInfo = await _imageProcessor.GetImageInfoAsync(_imagePaths[0]).ConfigureAwait(false);
 
-            _originalWidth = imageInfo.Width;
-            _originalHeight = imageInfo.Height;
-
-            // Update UI
-            if (_imagePaths.Count == 1)
+            Dispatcher.Invoke(() =>
             {
-                FileCountText.Text = $"Resizing: {Path.GetFileName(firstImagePath)}";
-                OriginalDimensionsText.Text = $"Original: {_originalWidth} × {_originalHeight} px";
-                OriginalDimensionsText.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                FileCountText.Text = $"Resizing {_imagePaths.Count} images";
-                OriginalDimensionsText.Text = string.Empty;
-                OriginalDimensionsText.Visibility = Visibility.Collapsed;
-            }
-
-            WidthBox.Text = _originalWidth.ToString();
-            HeightBox.Text = _originalHeight.ToString();
-
-            ConfigureUiForMode();
+                _originalWidth = imageInfo.Width;
+                _originalHeight = imageInfo.Height;
+                RefreshHeader();
+                WidthBox.Text = _originalWidth.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                HeightBox.Text = _originalHeight.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                ConfigureUiForMode();
+            });
         }
         catch (Exception ex)
         {
-            ShowError($"Failed to load image: {ex.Message}");
-            ResizeButton.IsEnabled = false;
+            Dispatcher.Invoke(() =>
+            {
+                ShowError($"Failed to load image: {ex.Message}");
+                ResizeButton.IsEnabled = false;
+            });
+        }
+    }
+
+    private void RefreshHeader()
+    {
+        if (_imagePaths.Count == 1)
+        {
+            FileCountText.Text = $"Resizing: {Path.GetFileName(_imagePaths[0])}";
+            OriginalDimensionsText.Text = _originalWidth > 0 && _originalHeight > 0
+                ? $"Original: {_originalWidth} × {_originalHeight} px"
+                : string.Empty;
+            OriginalDimensionsText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            FileCountText.Text = $"Resizing {_imagePaths.Count} images";
+            OriginalDimensionsText.Text = string.Empty;
+            OriginalDimensionsText.Visibility = Visibility.Collapsed;
         }
     }
 
     private static List<string> GetSelectedExplorerImagePaths()
     {
         var results = new List<string>();
+        dynamic? shell = null;
         try
         {
             var shellType = Type.GetTypeFromProgID("Shell.Application");
             if (shellType == null)
                 return results;
 
-            dynamic? shell = null;
-            try
+            shell = Activator.CreateInstance(shellType);
+            var windows = (IEnumerable)shell!.Windows();
+            foreach (var win in windows)
             {
-                shell = Activator.CreateInstance(shellType);
-                var windows = (IEnumerable)shell.Windows();
-                foreach (var win in windows)
+                try
                 {
-                    try
-                    {
-                        dynamic? doc = ((dynamic)win).Document;
-                        if (doc == null)
-                            continue;
-                        var selected = doc.SelectedItems();
-                        if (selected == null)
-                            continue;
+                    dynamic? doc = ((dynamic)win).Document;
+                    if (doc == null) continue;
+                    var selected = doc.SelectedItems();
+                    if (selected == null) continue;
 
-                        foreach (var item in selected)
+                    foreach (var item in selected)
+                    {
+                        try
                         {
-                            try
-                            {
-                                string path = (string)((dynamic)item).Path;
-                                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && IsImageFile(path))
-                                {
-                                    results.Add(path);
-                                }
-                            }
-                            catch { }
+                            string path = (string)((dynamic)item).Path;
+                            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && IsImageFile(path))
+                                results.Add(path);
                         }
+                        catch (RuntimeBinderException) { }
+                        catch (COMException) { }
                     }
-                    catch { }
                 }
-            }
-            finally
-            {
-                if (shell != null && Marshal.IsComObject(shell))
-                {
-                    try { Marshal.FinalReleaseComObject(shell); } catch { }
-                }
+                catch (RuntimeBinderException) { }
+                catch (COMException) { }
             }
         }
-        catch { }
+        catch (COMException) { }
+        catch (InvalidOperationException) { }
+        finally
+        {
+            if (shell != null && Marshal.IsComObject(shell))
+            {
+                try { Marshal.FinalReleaseComObject(shell); }
+                catch (InvalidComObjectException) { }
+            }
+        }
 
         return results.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
@@ -161,7 +162,6 @@ public partial class MainWindow : Window
     {
         if (_isMultipleImages)
         {
-            // Hide dimension boxes for multiple images
             DimensionsPanel.Visibility = Visibility.Collapsed;
             PercentageLabel.Text = "Size Percentage (applies to all images)";
             OriginalDimensionsText.Text = string.Empty;
@@ -169,7 +169,6 @@ public partial class MainWindow : Window
         }
         else
         {
-            // Show dimension boxes for single image
             DimensionsPanel.Visibility = Visibility.Visible;
             PercentageLabel.Text = "Size Percentage";
             OriginalDimensionsText.Visibility = Visibility.Visible;
@@ -179,13 +178,14 @@ public partial class MainWindow : Window
     // Called by App when a secondary instance forwards more files
     public void AddFiles(IEnumerable<string> files)
     {
+        if (_resizeInProgress) return;
+
         var toAdd = files
             .Where(File.Exists)
             .Where(IsImageFile)
             .ToList();
 
-        if (toAdd.Count == 0)
-            return;
+        if (toAdd.Count == 0) return;
 
         foreach (var p in toAdd)
         {
@@ -195,24 +195,12 @@ public partial class MainWindow : Window
 
         _isMultipleImages = _imagePaths.Count > 1;
         ConfigureUiForMode();
+        RefreshHeader();
 
-        if (_isMultipleImages)
+        if (!_isMultipleImages && _originalWidth > 0 && _originalHeight > 0)
         {
-            FileCountText.Text = $"Resizing {_imagePaths.Count} images";
-            OriginalDimensionsText.Text = string.Empty;
-            OriginalDimensionsText.Visibility = Visibility.Collapsed;
-        }
-        else if (_imagePaths.Count == 1)
-        {
-            var first = _imagePaths[0];
-            FileCountText.Text = $"Resizing: {Path.GetFileName(first)}";
-            if (_originalWidth > 0 && _originalHeight > 0)
-            {
-                OriginalDimensionsText.Text = $"Original: {_originalWidth} × {_originalHeight} px";
-                WidthBox.Text = _originalWidth.ToString();
-                HeightBox.Text = _originalHeight.ToString();
-                OriginalDimensionsText.Visibility = Visibility.Visible;
-            }
+            WidthBox.Text = _originalWidth.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            HeightBox.Text = _originalHeight.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         ErrorBorder.Visibility = Visibility.Collapsed;
@@ -225,17 +213,15 @@ public partial class MainWindow : Window
             return;
 
         _isUpdatingFromSlider = true;
-
         var percentage = (int)e.NewValue;
         PercentageText.Text = $"{percentage}%";
 
         if (!_isMultipleImages)
         {
             var scale = percentage / 100.0;
-            WidthBox.Text = ((int)Math.Round(_originalWidth * scale)).ToString();
-            HeightBox.Text = ((int)Math.Round(_originalHeight * scale)).ToString();
+            WidthBox.Text = ((int)Math.Round(_originalWidth * scale)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            HeightBox.Text = ((int)Math.Round(_originalHeight * scale)).ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
-
         _isUpdatingFromSlider = false;
     }
 
@@ -248,31 +234,41 @@ public partial class MainWindow : Window
             return;
 
         _isUpdatingFromTextBox = true;
-
-        var percentage = (newWidth / (double)_originalWidth) * 100.0;
+        var percentage = newWidth / (double)_originalWidth * 100.0;
         PercentageSlider.Value = Math.Clamp(percentage, PercentageSlider.Minimum, PercentageSlider.Maximum);
         PercentageText.Text = $"{(int)Math.Round(percentage)}%";
-
         _isUpdatingFromTextBox = false;
     }
 
     private void QualitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (QualityText != null)
-            QualityText.Text = ((int)e.NewValue).ToString();
+            QualityText.Text = ((int)e.NewValue).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async void ResizeButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_imagePaths.Count == 0)
+        {
+            ShowError("Nothing to resize — queue some images first.");
+            return;
+        }
+
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        _resizeInProgress = true;
+
         try
         {
             ResizeButton.IsEnabled = false;
-            CancelButton.IsEnabled = false;
+            CancelButton.Content = "Stop";
             ProgressPanel.Visibility = Visibility.Visible;
             ErrorBorder.Visibility = Visibility.Collapsed;
+            ProgressBar.Value = 0;
+            ProgressText.Text = "Starting…";
+            ProgressEtaText.Text = string.Empty;
 
             ResizeSettings settings;
-
             if (_isMultipleImages)
             {
                 settings = new ResizeSettings
@@ -303,72 +299,134 @@ public partial class MainWindow : Window
 
             var progress = new Progress<ResizeProgress>(p =>
             {
-                Dispatcher.Invoke(() =>
-                {
-                    ProgressText.Text = $"Processing {p.CurrentFile} of {p.TotalFiles}: {p.FileName}";
-                    ProgressBar.Value = (p.CurrentFile / (double)p.TotalFiles) * 100;
-                });
+                ProgressText.Text = $"{p.CurrentFile}/{p.TotalFiles} — {p.FileName}";
+                ProgressBar.Value = p.CurrentFile / (double)p.TotalFiles * 100;
+                ProgressEtaText.Text = p.Eta > TimeSpan.Zero
+                    ? $"{FormatDuration(p.Elapsed)} elapsed · ~{FormatDuration(p.Eta)} left"
+                    : FormatDuration(p.Elapsed) + " elapsed";
             });
 
-            await _imageProcessor.ResizeImagesAsync(_imagePaths, settings, progress);
+            await _imageProcessor.ResizeImagesAsync(_imagePaths, settings, progress, _cts.Token).ConfigureAwait(true);
 
             Close();
+        }
+        catch (OperationCanceledException)
+        {
+            ShowInfo("Cancelled.");
+            ResetPostRunUi();
         }
         catch (BatchResizeException batchEx)
         {
             ShowError(FormatBatchFailure(batchEx));
-            ResizeButton.IsEnabled = true;
-            CancelButton.IsEnabled = true;
-            ProgressPanel.Visibility = Visibility.Collapsed;
+            ResetPostRunUi();
         }
         catch (Exception ex)
         {
             ShowError($"Failed to resize images: {ex.Message}");
-            ResizeButton.IsEnabled = true;
-            CancelButton.IsEnabled = true;
-            ProgressPanel.Visibility = Visibility.Collapsed;
+            ResetPostRunUi();
         }
+        finally
+        {
+            _resizeInProgress = false;
+        }
+    }
+
+    private void ResetPostRunUi()
+    {
+        ResizeButton.IsEnabled = true;
+        CancelButton.Content = "Cancel";
+        ProgressPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private static string FormatDuration(TimeSpan ts)
+    {
+        if (ts.TotalSeconds < 1) return "<1s";
+        if (ts.TotalMinutes < 1) return $"{(int)ts.TotalSeconds}s";
+        return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
     }
 
     private static string FormatBatchFailure(BatchResizeException ex)
     {
-        if (ex.SuccessCount == 0)
-        {
-            var header = $"All {ex.TotalCount} files failed. Check folder permissions or OneDrive sync status.";
-            var details = string.Join(Environment.NewLine,
-                ex.Failures.Select(f => $"  \u2022 {Path.GetFileName(f.Path)}: {f.Reason}"));
-            return $"{header}{Environment.NewLine}{details}";
-        }
-        else
-        {
-            var header = $"{ex.SuccessCount} of {ex.TotalCount} succeeded, {ex.Failures.Count} failed:";
-            var details = string.Join(Environment.NewLine,
-                ex.Failures.Select(f => $"  \u2022 {Path.GetFileName(f.Path)}: {f.Reason}"));
-            return $"{header}{Environment.NewLine}{details}";
-        }
+        var failures = string.Join(Environment.NewLine,
+            ex.Failures.Select(f => $"  • {Path.GetFileName(f.Path)}: {f.Reason}"));
+
+        var header = ex.SuccessCount == 0
+            ? $"All {ex.TotalCount} files failed. Check folder permissions or OneDrive sync status."
+            : $"{ex.SuccessCount} of {ex.TotalCount} succeeded, {ex.Failures.Count} failed:";
+
+        return $"{header}{Environment.NewLine}{failures}";
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
-        Close();
+        if (_resizeInProgress)
+        {
+            _cts?.Cancel();
+            CancelButton.IsEnabled = false;
+            ProgressText.Text = "Cancelling…";
+        }
+        else
+        {
+            Close();
+        }
+    }
+
+    private void AboutButton_Click(object sender, RoutedEventArgs e) => ShowAbout();
+
+    private void Help_Executed(object sender, System.Windows.Input.ExecutedRoutedEventArgs e) => ShowAbout();
+
+    public void ShowAbout()
+    {
+        var dlg = new AboutWindow { Owner = this };
+        dlg.ShowDialog();
+    }
+
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = HasImageFiles(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (_resizeInProgress) return;
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+
+        AddFiles(files);
+        e.Handled = true;
+    }
+
+    private static bool HasImageFiles(IDataObject data)
+    {
+        if (data.GetData(DataFormats.FileDrop) is not string[] files)
+            return false;
+        return files.Any(IsImageFile);
+    }
+
+    private void ShowInfo(string message)
+    {
+        ErrorHeading.Text = "Info";
+        ErrorText.Text = message;
+        ErrorBorder.Visibility = Visibility.Visible;
     }
 
     private void ShowError(string message)
     {
+        ErrorHeading.Text = "Error";
         ErrorText.Text = message;
         ErrorBorder.Visibility = Visibility.Visible;
     }
 
     private static bool IsImageFile(string path)
-    {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ext is ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" or ".bmp" or ".tif" or ".tiff";
-    }
+        => ImageExtensions.Contains(Path.GetExtension(path));
 
     private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
+        => e.Handled = NumberOnly.IsMatch(e.Text);
+
+    protected override void OnClosed(EventArgs e)
     {
-        var regex = new Regex("[^0-9]+");
-        e.Handled = regex.IsMatch(e.Text);
+        _cts?.Cancel();
+        _cts?.Dispose();
+        base.OnClosed(e);
     }
 }
-

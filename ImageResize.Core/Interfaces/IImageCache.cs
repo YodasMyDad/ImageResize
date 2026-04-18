@@ -10,7 +10,7 @@ public interface IImageCache
     /// <summary>
     /// Gets the cached file path for the given parameters.
     /// </summary>
-    string GetCachedFilePath(string relPath, ResizeOptions options, string sourceSignature);
+    string GetCachedFilePath(string relPath, ResizeOptions resizeOptions, string sourceSignature);
 
     /// <summary>
     /// Checks if a cached file exists.

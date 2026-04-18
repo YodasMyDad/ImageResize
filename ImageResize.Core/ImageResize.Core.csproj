@@ -2,18 +2,23 @@
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
-        <Nullable>enable</Nullable>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <LangVersion>latest</LangVersion>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);CS1591;CA1848</NoWarn>
         <PackageId>ImageResize</PackageId>
-        <Version>3.0.0</Version>
-        <Authors>Lee Messenger</Authors>
-        <Description>Minimal, cross-platform image resize middleware for ASP.NET Core</Description>
+        <Description>Minimal, cross-platform image resize middleware for ASP.NET Core, backed by SkiaSharp.</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/YodasMyDad/ImageResize</PackageProjectUrl>
         <RepositoryUrl>https://github.com/YodasMyDad/ImageResize</RepositoryUrl>
-        <PackageTags>aspnetcore,image,resize,middleware,cache</PackageTags>
+        <RepositoryType>git</RepositoryType>
+        <PackageTags>aspnetcore;image;resize;middleware;cache;skiasharp</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageReleaseNotes>See CHANGELOG.md on GitHub for release notes.</PackageReleaseNotes>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <PackageOutputPath>$(MSBuildThisFileDirectory)..\nupkgs</PackageOutputPath>
     </PropertyGroup>
 
     <ItemGroup>
@@ -21,15 +26,19 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="SkiaSharp" Version="3.119.2" />
-        <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.2" />
-        <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="3.119.2" />
-        <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.2" />
-        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.6" />
+        <PackageReference Include="SkiaSharp" />
+        <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
+        <PackageReference Include="SkiaSharp.NativeAssets.macOS" />
+        <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
+        <PackageReference Include="System.IO.Hashing" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     </ItemGroup>
 
     <ItemGroup>
         <None Include="..\README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
-    
+
 </Project>

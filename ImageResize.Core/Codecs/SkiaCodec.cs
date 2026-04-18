@@ -15,11 +15,9 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
     /// <inheritdoc />
     public async Task<(int Width, int Height, string ContentType)> ProbeAsync(Stream input, CancellationToken ct)
     {
-        using var ms = await CopyToMemoryStream(input, ct);
-        using var codec = SKCodec.Create(ms);
-
-        if (codec == null)
-            throw new InvalidOperationException("Unable to decode image");
+        using var ms = await CopyToMemoryStreamAsync(input, ct).ConfigureAwait(false);
+        using var codec = SKCodec.Create(ms)
+            ?? throw new InvalidOperationException("Unable to decode image");
 
         var info = codec.Info;
         var mime = MimeFromEncodedFormat(codec.EncodedFormat);
@@ -31,70 +29,39 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
     public async Task<(Stream Output, string ContentType, int OutW, int OutH)> ResizeAsync(
         Stream input,
         string? originalContentType,
-        ResizeOptions options1,
+        ResizeOptions resizeOptions,
         CancellationToken ct)
     {
-        using var ms = await CopyToMemoryStream(input, ct);
-        using var codec = SKCodec.Create(ms);
-
-        if (codec == null)
-            throw new InvalidOperationException("Unable to decode image");
+        using var ms = await CopyToMemoryStreamAsync(input, ct).ConfigureAwait(false);
+        using var codec = SKCodec.Create(ms)
+            ?? throw new InvalidOperationException("Unable to decode image");
 
         var info = codec.Info;
-        var (outW, outH) = Fit(info.Width, info.Height, options1.Width, options1.Height, options.Value.AllowUpscale);
+        var (outW, outH) = Fit(info.Width, info.Height, resizeOptions.Width, resizeOptions.Height, options.Value.AllowUpscale);
 
         // Reset stream position after codec creation
         ms.Position = 0;
-        using var bitmap = SKBitmap.Decode(ms);
+        using var bitmap = SKBitmap.Decode(ms)
+            ?? throw new InvalidOperationException("Unable to decode bitmap from image data");
 
-        if (bitmap == null)
-            throw new InvalidOperationException("Unable to decode bitmap from image data");
-
-        // Use the highest quality resize with proper color handling
-        // Mitchell resampler provides sharper results than CatmullRom for downscaling
+        // Mitchell resampler: sharper than CatmullRom for downscaling.
         var samplingOptions = new SKSamplingOptions(SKCubicResampler.Mitchell);
         using var resized = bitmap.Resize(
             new SKImageInfo(outW, outH, bitmap.ColorType, bitmap.AlphaType, bitmap.ColorSpace),
-            samplingOptions);
-
-        if (resized == null)
-            throw new InvalidOperationException("Failed to resize image");
+            samplingOptions)
+            ?? throw new InvalidOperationException("Failed to resize image");
 
         using var image = SKImage.FromBitmap(resized);
         var fmt = codec.EncodedFormat; // Keep original format
 
         var outStream = new MemoryStream();
-        var quality = options1.Quality ?? options.Value.DefaultQuality;
+        var quality = resizeOptions.Quality ?? options.Value.DefaultQuality;
 
-        switch (fmt)
+        using (var data = fmt == SKEncodedImageFormat.Png
+            ? image.Encode(fmt, options.Value.PngCompressionLevel)
+            : image.Encode(fmt, quality))
         {
-            case SKEncodedImageFormat.Jpeg:
-                // Use high-quality JPEG encoding with better quality settings
-                using (var data = image.Encode(SKEncodedImageFormat.Jpeg, quality))
-                {
-                    data.SaveTo(outStream);
-                }
-                break;
-            case SKEncodedImageFormat.Webp:
-                using (var data = image.Encode(SKEncodedImageFormat.Webp, quality))
-                {
-                    data.SaveTo(outStream);
-                }
-                break;
-            case SKEncodedImageFormat.Png:
-                // PNG quality parameter is compression level (0-9), doesn't affect visual quality
-                // Use configured compression level (higher = smaller file, slightly slower)
-                using (var data = image.Encode(SKEncodedImageFormat.Png, options.Value.PngCompressionLevel))
-                {
-                    data.SaveTo(outStream);
-                }
-                break;
-            default:
-                using (var data = image.Encode(fmt, quality))
-                {
-                    data.SaveTo(outStream);
-                }
-                break;
+            data.SaveTo(outStream);
         }
 
         outStream.Position = 0;
@@ -106,27 +73,46 @@ public sealed class SkiaCodec(IOptions<ImageResizeOptions> options, ILogger<Skia
         return (outStream, mime, outW, outH);
     }
 
-    private static async Task<MemoryStream> CopyToMemoryStream(Stream input, CancellationToken ct)
+    /// <summary>
+    /// Copies <paramref name="input"/> into a seekable <see cref="MemoryStream"/>, enforcing the
+    /// configured <see cref="ImageResizeOptions.MaxSourceBytes"/> cap so an oversized or crafted
+    /// stream cannot exhaust memory during decode.
+    /// </summary>
+    private async Task<MemoryStream> CopyToMemoryStreamAsync(Stream input, CancellationToken ct)
     {
+        var maxBytes = options.Value.MaxSourceBytes;
         var ms = new MemoryStream();
-        await input.CopyToAsync(ms, ct);
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await input.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false)) > 0)
+        {
+            total += read;
+            if (maxBytes > 0 && total > maxBytes)
+            {
+                ms.Dispose();
+                throw new InvalidOperationException(
+                    $"Source image exceeds MaxSourceBytes ({maxBytes:N0} bytes).");
+            }
+            ms.Write(buffer, 0, read);
+        }
         ms.Position = 0;
         return ms;
     }
 
     private static (int outW, int outH) Fit(int srcW, int srcH, int? reqW, int? reqH, bool allowUpscale)
     {
-        double scaleW = reqW.HasValue ? (double)reqW.Value / srcW : double.PositiveInfinity;
-        double scaleH = reqH.HasValue ? (double)reqH.Value / srcH : double.PositiveInfinity;
+        var scaleW = reqW.HasValue ? (double)reqW.Value / srcW : double.PositiveInfinity;
+        var scaleH = reqH.HasValue ? (double)reqH.Value / srcH : double.PositiveInfinity;
 
-        double scale = Math.Min(scaleW, scaleH);
+        var scale = Math.Min(scaleW, scaleH);
         if (double.IsInfinity(scale))
             scale = reqW.HasValue ? scaleW : scaleH;
         if (!allowUpscale)
             scale = Math.Min(scale, 1.0);
 
-        int outW = Math.Max(1, (int)Math.Round(srcW * scale));
-        int outH = Math.Max(1, (int)Math.Round(srcH * scale));
+        var outW = Math.Max(1, (int)Math.Round(srcW * scale));
+        var outH = Math.Max(1, (int)Math.Round(srcH * scale));
         return (outW, outH);
     }
 

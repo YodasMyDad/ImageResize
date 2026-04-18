@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.IO;
 using ImageResize.Core.Interfaces;
 using ImageResize.ContextMenu.Models;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
-using System.IO;
 
 namespace ImageResize.ContextMenu.Services;
 
@@ -12,11 +14,11 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
     private const int ErrorLockViolation = unchecked((int)0x80070021);
     private static readonly int[] RetryDelaysMs = [100, 300, 800, 2000];
 
-    public async Task<ImageInfo> GetImageInfoAsync(string filePath)
+    public async Task<ImageInfo> GetImageInfoAsync(string filePath, CancellationToken ct = default)
     {
         await using var stream = File.OpenRead(filePath);
         var codec = resizerService.GetCodec();
-        var (width, height, contentType) = await codec.ProbeAsync(stream, CancellationToken.None);
+        var (width, height, contentType) = await codec.ProbeAsync(stream, ct).ConfigureAwait(false);
 
         return new ImageInfo
         {
@@ -26,31 +28,41 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
         };
     }
 
+    /// <summary>
+    /// Resizes a batch of images in parallel, reporting per-file progress and isolating per-file
+    /// failures so one broken image does not abort the batch. Respects
+    /// <paramref name="ct"/> for user-initiated cancellation.
+    /// </summary>
     public async Task ResizeImagesAsync(
-        List<string> imagePaths,
+        IReadOnlyList<string> imagePaths,
         ResizeSettings settings,
-        IProgress<ResizeProgress> progress)
+        IProgress<ResizeProgress> progress,
+        CancellationToken ct = default)
     {
         var totalFiles = imagePaths.Count;
-        var currentFile = 0;
-        var failures = new List<(string Path, string Reason)>();
+        var completed = 0;
         var successCount = 0;
+        var failures = new ConcurrentBag<(string Path, string Reason)>();
+        var started = Stopwatch.StartNew();
 
-        foreach (var imagePath in imagePaths)
+        var parallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 6);
+        var parallelOptions = new ParallelOptions
         {
-            currentFile++;
+            MaxDegreeOfParallelism = parallelism,
+            CancellationToken = ct
+        };
 
-            progress?.Report(new ResizeProgress
-            {
-                CurrentFile = currentFile,
-                TotalFiles = totalFiles,
-                FileName = Path.GetFileName(imagePath)
-            });
-
+        await Parallel.ForEachAsync(imagePaths, parallelOptions, async (imagePath, cancel) =>
+        {
+            var fileName = Path.GetFileName(imagePath);
             try
             {
-                await ResizeSingleImageAsync(imagePath, settings, currentFile, totalFiles, progress);
-                successCount++;
+                await ResizeSingleImageAsync(imagePath, settings, cancel).ConfigureAwait(false);
+                Interlocked.Increment(ref successCount);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -60,23 +72,37 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
                     : ex.Message;
                 failures.Add((imagePath, reason));
             }
-        }
+            finally
+            {
+                var current = Interlocked.Increment(ref completed);
+                var elapsed = started.Elapsed;
+                var eta = current > 0 && current < totalFiles
+                    ? TimeSpan.FromTicks((long)(elapsed.Ticks * ((double)(totalFiles - current) / current)))
+                    : TimeSpan.Zero;
 
-        if (failures.Count > 0)
-            throw new BatchResizeException(totalFiles, successCount, failures);
+                progress?.Report(new ResizeProgress
+                {
+                    CurrentFile = current,
+                    TotalFiles = totalFiles,
+                    FileName = fileName,
+                    Elapsed = elapsed,
+                    Eta = eta
+                });
+            }
+        }).ConfigureAwait(false);
+
+        if (!failures.IsEmpty)
+            throw new BatchResizeException(totalFiles, successCount, [.. failures]);
     }
 
     private async Task ResizeSingleImageAsync(
         string imagePath,
         ResizeSettings settings,
-        int currentFile,
-        int totalFiles,
-        IProgress<ResizeProgress>? progress)
+        CancellationToken ct)
     {
         var outputPath = GetOutputPath(imagePath, settings.Overwrite);
         var fileName = Path.GetFileName(imagePath);
 
-        // 1. Read the input once into memory (share-tolerant open + retry on transient locks).
         var inputData = new MemoryStream();
         await WithRetryAsync(async () =>
         {
@@ -88,16 +114,15 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
                 FileShare.ReadWrite | FileShare.Delete,
                 bufferSize: 81920,
                 useAsync: true);
-            await fs.CopyToAsync(inputData);
-        }, $"read {fileName}", currentFile, totalFiles, fileName, progress);
+            await fs.CopyToAsync(inputData, ct).ConfigureAwait(false);
+        }, $"read {fileName}", ct).ConfigureAwait(false);
         inputData.Position = 0;
 
-        // 2. Compute target dimensions (probe from buffered data if percentage mode).
         int targetWidth, targetHeight;
         if (settings.UsePercentage)
         {
             var codec = resizerService.GetCodec();
-            var (w, h, _) = await codec.ProbeAsync(inputData, CancellationToken.None);
+            var (w, h, _) = await codec.ProbeAsync(inputData, ct).ConfigureAwait(false);
             inputData.Position = 0;
             var scale = settings.Percentage / 100.0;
             targetWidth = (int)Math.Round(w * scale);
@@ -112,12 +137,10 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
         var resizeOptions = new ResizeOptions(
             Width: targetWidth,
             Height: targetHeight,
-            Quality: settings.Quality
-        );
+            Quality: settings.Quality);
 
-        using var result = await resizerService.ResizeAsync(inputData, null, resizeOptions, CancellationToken.None);
+        using var result = await resizerService.ResizeAsync(inputData, null, resizeOptions, ct).ConfigureAwait(false);
 
-        // 3. Atomic write: temp file in the same directory, then File.Move(overwrite: true).
         var dir = Path.GetDirectoryName(outputPath) ?? string.Empty;
         var tempPath = Path.Combine(
             dir,
@@ -135,9 +158,9 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
                     bufferSize: 81920,
                     useAsync: true);
                 result.Stream.Position = 0;
-                await result.Stream.CopyToAsync(outFs);
-                await outFs.FlushAsync();
-            }, $"write temp for {fileName}", currentFile, totalFiles, fileName, progress);
+                await result.Stream.CopyToAsync(outFs, ct).ConfigureAwait(false);
+                await outFs.FlushAsync(ct).ConfigureAwait(false);
+            }, $"write temp for {fileName}", ct).ConfigureAwait(false);
 
             await WithRetryAsync(() =>
             {
@@ -149,11 +172,11 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
                 }
                 File.Move(tempPath, outputPath, overwrite: true);
                 return Task.CompletedTask;
-            }, $"rename to {fileName}", currentFile, totalFiles, fileName, progress);
+            }, $"rename to {fileName}", ct).ConfigureAwait(false);
         }
         catch
         {
-            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch (IOException) { /* best effort */ }
             throw;
         }
 
@@ -161,19 +184,16 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
             imagePath, outputPath, result.Width, result.Height);
     }
 
-    private async Task WithRetryAsync(
-        Func<Task> op,
-        string context,
-        int currentFile,
-        int totalFiles,
-        string fileName,
-        IProgress<ResizeProgress>? progress)
+    private async Task WithRetryAsync(Func<Task> op, string context, CancellationToken ct)
     {
-        for (var attempt = 0; ; attempt++)
+        // Retry transient sharing-violation IOExceptions using the configured backoff. On the
+        // final attempt the `when` filter evaluates false, so the IOException propagates to the
+        // caller untouched.
+        for (var attempt = 0; attempt <= RetryDelaysMs.Length; attempt++)
         {
             try
             {
-                await op();
+                await op().ConfigureAwait(false);
                 return;
             }
             catch (IOException ex) when (IsSharingViolation(ex) && attempt < RetryDelaysMs.Length)
@@ -182,24 +202,16 @@ public sealed class ImageProcessor(IImageResizerService resizerService, ILogger<
                 logger.LogWarning(
                     "Transient lock on {Context} (attempt {Attempt}/{Max}): {Msg}. Retrying in {Delay}ms.",
                     context, attempt + 1, RetryDelaysMs.Length, ex.Message, delay);
-
-                progress?.Report(new ResizeProgress
-                {
-                    CurrentFile = currentFile,
-                    TotalFiles = totalFiles,
-                    FileName = $"{fileName} (retrying {attempt + 1}/{RetryDelaysMs.Length})"
-                });
-
-                await Task.Delay(delay);
+                await Task.Delay(delay, ct).ConfigureAwait(false);
             }
         }
     }
 
-    private static bool IsSharingViolation(IOException ex) =>
-        ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation;
+    private static bool IsSharingViolation(IOException ex)
+        => ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation;
 
-    private static bool IsTransientLock(Exception ex) =>
-        ex is IOException io && IsSharingViolation(io);
+    private static bool IsTransientLock(Exception ex)
+        => ex is IOException io && IsSharingViolation(io);
 
     private static string GetOutputPath(string originalPath, bool overwrite)
     {

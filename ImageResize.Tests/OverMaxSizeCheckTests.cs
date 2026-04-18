@@ -16,8 +16,10 @@ namespace ImageResize.Tests;
 /// Tests for the OverMaxSizeCheckAsync extension method.
 /// </summary>
 [TestFixture]
+[Parallelizable(ParallelScope.Self)]
 public class OverMaxSizeCheckTests
 {
+    private string _tempDir = null!;
     private ImageResizeOptions _options = null!;
     private Mock<IOptions<ImageResizeOptions>> _optionsMock = null!;
     private Mock<ILogger<SkiaCodec>> _codecLogger = null!;
@@ -28,10 +30,12 @@ public class OverMaxSizeCheckTests
     [SetUp]
     public void Setup()
     {
+        _tempDir = TestPaths.AllocateTempDir(nameof(OverMaxSizeCheckTests));
+
         _options = new ImageResizeOptions
         {
-            WebRoot = Path.GetTempPath(),
-            CacheRoot = Path.Combine(Path.GetTempPath(), "cache"),
+            WebRoot = _tempDir,
+            CacheRoot = Path.Combine(_tempDir, "cache"),
             AllowUpscale = false,
             DefaultQuality = 85,
             PngCompressionLevel = 6
@@ -46,6 +50,9 @@ public class OverMaxSizeCheckTests
         _codec = new SkiaCodec(_optionsMock.Object, _codecLogger.Object);
         _service = new ImageResizerService(_optionsMock.Object, Mock.Of<IImageCache>(), _codec, _serviceLogger.Object);
     }
+
+    [TearDown]
+    public void TearDown() => TestPaths.SafeDeleteDir(_tempDir);
 
     [Test]
     public async Task OverMaxSizeCheckAsync_WithSmallImage_ReturnsOriginalImage()

@@ -6,7 +6,7 @@ namespace ImageResize.Core.Configuration;
 public class ImageResizeOptions
 {
     /// <summary>
-    /// Whether to enable the middleware.
+    /// Whether to enable the middleware. Defaults to <c>true</c>.
     /// </summary>
     public bool EnableMiddleware { get; set; } = true;
 
@@ -27,12 +27,12 @@ public class ImageResizeOptions
     public string CacheRoot { get; set; } = "wwwroot/_imgcache";
 
     /// <summary>
-    /// Whether to allow upscaling beyond original dimensions.
+    /// Whether to allow upscaling beyond original dimensions. Defaults to <c>false</c>.
     /// </summary>
-    public bool AllowUpscale { get; set; } = false;
+    public bool AllowUpscale { get; set; }
 
     /// <summary>
-    /// Default quality when only width/height specified (JPEG/WebP).
+    /// Default quality when only width/height specified (JPEG/WebP). Range 1-100.
     /// </summary>
     public int DefaultQuality { get; set; } = 99;
 
@@ -42,6 +42,13 @@ public class ImageResizeOptions
     public int PngCompressionLevel { get; set; } = 6;
 
     /// <summary>
+    /// Maximum permitted size of the source image stream in bytes. The decoder will refuse to
+    /// load inputs larger than this, which mitigates decompression-bomb attacks. Defaults to
+    /// 256 MiB. Values &lt;= 0 disable the check (not recommended in production).
+    /// </summary>
+    public long MaxSourceBytes { get; set; } = 256L * 1024 * 1024;
+
+    /// <summary>
     /// Bounds for width, height, and quality parameters.
     /// </summary>
     public BoundsOptions Bounds { get; set; } = new();
@@ -49,7 +56,7 @@ public class ImageResizeOptions
     /// <summary>
     /// Whether to include content hash in cache key.
     /// </summary>
-    public bool HashOriginalContent { get; set; } = false;
+    public bool HashOriginalContent { get; set; }
 
     /// <summary>
     /// Cache configuration.
@@ -76,11 +83,17 @@ public class ImageResizeOptions
     /// </summary>
     public class BoundsOptions
     {
+        /// <summary>Minimum accepted width in pixels.</summary>
         public int MinWidth { get; set; } = 16;
+        /// <summary>Maximum accepted width in pixels.</summary>
         public int MaxWidth { get; set; } = 4096;
+        /// <summary>Minimum accepted height in pixels.</summary>
         public int MinHeight { get; set; } = 16;
+        /// <summary>Maximum accepted height in pixels.</summary>
         public int MaxHeight { get; set; } = 4096;
+        /// <summary>Minimum accepted quality value.</summary>
         public int MinQuality { get; set; } = 10;
+        /// <summary>Maximum accepted quality value.</summary>
         public int MaxQuality { get; set; } = 100;
     }
 
@@ -89,9 +102,12 @@ public class ImageResizeOptions
     /// </summary>
     public class CacheOptions
     {
+        /// <summary>Number of two-character directory levels to use for sharding the cache (default 2).</summary>
         public int FolderSharding { get; set; } = 2;
-        public bool PruneOnStartup { get; set; } = false;
-        public long MaxCacheBytes { get; set; } = 0; // 0 = unlimited
+        /// <summary>If true, prunes a batch of oldest cache files on startup.</summary>
+        public bool PruneOnStartup { get; set; }
+        /// <summary>Soft cap on total cache size in bytes. 0 means unlimited.</summary>
+        public long MaxCacheBytes { get; set; }
     }
 
     /// <summary>
@@ -99,8 +115,11 @@ public class ImageResizeOptions
     /// </summary>
     public class ResponseCacheOptions
     {
-        public int ClientCacheSeconds { get; set; } = 604800; // 7 days
+        /// <summary>Value emitted in the <c>Cache-Control: max-age</c> header (default 7 days).</summary>
+        public int ClientCacheSeconds { get; set; } = 604800;
+        /// <summary>Whether to emit an <c>ETag</c> header.</summary>
         public bool SendETag { get; set; } = true;
+        /// <summary>Whether to emit a <c>Last-Modified</c> header.</summary>
         public bool SendLastModified { get; set; } = true;
     }
 }
@@ -110,7 +129,10 @@ public class ImageResizeOptions
 /// </summary>
 public enum ImageBackend
 {
+    /// <summary>SkiaSharp-backed codec (default, cross-platform).</summary>
     SkiaSharp,
+    /// <summary>Reserved for a future Magick.NET backend.</summary>
     MagickNet,
+    /// <summary>Reserved for a future System.Drawing backend.</summary>
     SystemDrawing
 }

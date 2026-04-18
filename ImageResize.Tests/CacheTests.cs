@@ -13,8 +13,10 @@ namespace ImageResize.Tests;
 /// Tests for cache functionality.
 /// </summary>
 [TestFixture]
+[Parallelizable(ParallelScope.All)]
 public class CacheTests
 {
+    private string _tempDir = null!;
     private ImageResizeOptions _options = null!;
     private Mock<IOptions<ImageResizeOptions>> _optionsMock = null!;
     private Mock<ILogger<FileSystemImageCache>> _logger = null!;
@@ -23,9 +25,11 @@ public class CacheTests
     [SetUp]
     public void Setup()
     {
+        _tempDir = TestPaths.AllocateTempDir(nameof(CacheTests));
+
         _options = new ImageResizeOptions
         {
-            CacheRoot = "/tmp/cache",
+            CacheRoot = _tempDir,
             AllowUpscale = false,
             DefaultQuality = 80,
             Cache = new ImageResizeOptions.CacheOptions { FolderSharding = 2 }
@@ -37,6 +41,9 @@ public class CacheTests
         _logger = new Mock<ILogger<FileSystemImageCache>>();
         _cache = new FileSystemImageCache(_optionsMock.Object, _logger.Object);
     }
+
+    [TearDown]
+    public void TearDown() => TestPaths.SafeDeleteDir(_tempDir);
 
     [Test]
     public void GetCachedFilePath_GeneratesConsistentKeys()

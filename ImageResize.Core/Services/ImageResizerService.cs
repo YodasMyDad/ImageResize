@@ -1,6 +1,7 @@
 using ImageResize.Core.Configuration;
 using ImageResize.Core.Interfaces;
 using ImageResize.Core.Models;
+using ImageResize.Core.Utilities;
 using ImageResize.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,24 +23,16 @@ public sealed class ImageResizerService(
     /// <inheritdoc />
     public async Task<ResizeResult> EnsureResizedAsync(string relativePath, ResizeOptions options, CancellationToken ct = default)
     {
-        // Validate and resolve original file path
         var originalPath = ResolveOriginalPath(relativePath);
         if (!File.Exists(originalPath))
-        {
             throw new FileNotFoundException("Original image not found", originalPath);
-        }
 
-        // Generate source signature
-        var sourceSignature = await GenerateSourceSignatureAsync(originalPath, ct);
-
-        // Get cache path
+        var sourceSignature = await GenerateSourceSignatureAsync(originalPath, ct).ConfigureAwait(false);
         var cachedPath = cache.GetCachedFilePath(relativePath, options, sourceSignature);
 
-        // Use keyed lock to prevent thundering herd
-        await using var lockHandle = await _locker.LockAsync(cachedPath, ct);
+        await using var lockHandle = await _locker.LockAsync(cachedPath, ct).ConfigureAwait(false);
 
-        // Check cache first
-        if (await cache.ExistsAsync(cachedPath, ct))
+        if (await cache.ExistsAsync(cachedPath, ct).ConfigureAwait(false))
         {
             logger.LogDebug("Cache hit for {Path}", cachedPath);
             var fileInfo = new FileInfo(cachedPath);
@@ -47,7 +40,7 @@ public sealed class ImageResizerService(
                 OriginalPath: originalPath,
                 CachedPath: cachedPath,
                 ContentType: GetContentTypeFromPath(cachedPath),
-                OutputWidth: 0, // Would need to probe cached file to get this
+                OutputWidth: 0,
                 OutputHeight: 0,
                 BytesWritten: fileInfo.Length
             );
@@ -55,13 +48,11 @@ public sealed class ImageResizerService(
 
         logger.LogDebug("Cache miss for {Path}, resizing...", cachedPath);
 
-        // Load and resize original
         await using var originalStream = File.OpenRead(originalPath);
         var (resizedStream, contentType, outW, outH) = await codec.ResizeAsync(
-            originalStream, null, options, ct);
+            originalStream, null, options, ct).ConfigureAwait(false);
 
-        // Write to cache
-        await cache.WriteAtomicallyAsync(cachedPath, resizedStream, ct);
+        await cache.WriteAtomicallyAsync(cachedPath, resizedStream, ct).ConfigureAwait(false);
 
         var bytesWritten = resizedStream.Length;
         logger.LogInformation("Resized {Original} to {Cached} ({Width}x{Height}, {Bytes} bytes)",
@@ -81,14 +72,12 @@ public sealed class ImageResizerService(
     public IImageCodec GetCodec() => codec;
 
     /// <inheritdoc />
-    public async Task<(Stream Stream, string ContentType, int Width, int Height)> ResizeToStreamAsync(
+    public Task<(Stream Stream, string ContentType, int Width, int Height)> ResizeToStreamAsync(
         Stream original,
         string? originalContentType,
         ResizeOptions options,
         CancellationToken ct = default)
-    {
-        return await codec.ResizeAsync(original, originalContentType, options, ct);
-    }
+        => codec.ResizeAsync(original, originalContentType, options, ct);
 
     /// <inheritdoc />
     public async Task<ImageResult> ResizeAsync(
@@ -97,17 +86,14 @@ public sealed class ImageResizerService(
         ResizeOptions options,
         CancellationToken ct = default)
     {
-        // Probe original image to get metadata
         var originalPosition = original.Position;
-        var (originalWidth, originalHeight, detectedContentType) = await codec.ProbeAsync(original, ct);
-        original.Position = originalPosition; // Reset stream position
+        var (originalWidth, originalHeight, _) = await codec.ProbeAsync(original, ct).ConfigureAwait(false);
+        original.Position = originalPosition;
 
-        // Resize the image
         var (resizedStream, contentType, newWidth, newHeight) = await codec.ResizeAsync(
-            original, originalContentType, options, ct);
+            original, originalContentType, options, ct).ConfigureAwait(false);
 
-        // Create helper functions for content type detection
-        string GetFileExtensionFromContentType(string ct) => ct.ToLowerInvariant() switch
+        static string FileExtFromCt(string ct) => ct.ToLowerInvariant() switch
         {
             "image/jpeg" => ".jpg",
             "image/png" => ".png",
@@ -118,7 +104,7 @@ public sealed class ImageResizerService(
             _ => ".bin"
         };
 
-        string GetFormatFromContentType(string ct) => ct.ToLowerInvariant() switch
+        static string FormatFromCt(string ct) => ct.ToLowerInvariant() switch
         {
             "image/jpeg" => "JPEG",
             "image/png" => "PNG",
@@ -129,51 +115,39 @@ public sealed class ImageResizerService(
             _ => "Unknown"
         };
 
-        // Create and return ImageResult with full metadata
         return new ImageResult(
             resizedStream,
             newWidth,
             newHeight,
             contentType,
             resizedStream.Length,
-            GetFileExtensionFromContentType(contentType),
-            GetFormatFromContentType(contentType),
+            FileExtFromCt(contentType),
+            FormatFromCt(contentType),
             originalWidth,
             originalHeight,
             options.Quality,
-            true); // IsProcessed = true since we resized it
+            true);
     }
 
     private string ResolveOriginalPath(string relativePath)
     {
-        // Security: Prevent path traversal
         var fullPath = Path.GetFullPath(Path.Combine(options.Value.WebRoot, relativePath));
-
-        // Ensure the resolved path is within WebRoot
         var webRootFull = Path.GetFullPath(options.Value.WebRoot);
         if (!fullPath.StartsWith(webRootFull, StringComparison.OrdinalIgnoreCase))
-        {
             throw new UnauthorizedAccessException("Path traversal attempt detected");
-        }
-
         return fullPath;
     }
 
     private async Task<string> GenerateSourceSignatureAsync(string filePath, CancellationToken ct)
     {
         var fileInfo = new FileInfo(filePath);
-        var lastWriteTicks = fileInfo.LastWriteTimeUtc.Ticks;
-        var length = fileInfo.Length;
-
-        var signature = $"{lastWriteTicks}:{length}";
+        var signature = $"{fileInfo.LastWriteTimeUtc.Ticks}:{fileInfo.Length}";
 
         if (options.Value.HashOriginalContent)
         {
             await using var stream = File.OpenRead(filePath);
-            using var sha1 = System.Security.Cryptography.SHA1.Create();
-            var hashBytes = await sha1.ComputeHashAsync(stream, ct);
-            var hashString = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
-            signature += $":{hashString}";
+            var hash = await HashingUtilities.HashStreamToHexAsync(stream, ct).ConfigureAwait(false);
+            signature += $":{hash}";
         }
 
         return signature;
@@ -200,7 +174,7 @@ public sealed class ImageResizerService(
 /// </summary>
 internal sealed class AsyncKeyedLocker
 {
-    private readonly Dictionary<string, AsyncLock> _locks = new();
+    private readonly Dictionary<string, AsyncLock> _locks = [];
     private readonly object _lock = new();
 
     public async Task<AsyncLockHandle> LockAsync(string key, CancellationToken ct = default)
@@ -215,7 +189,7 @@ internal sealed class AsyncKeyedLocker
             }
         }
 
-        await asyncLock.WaitAsync();
+        await asyncLock.WaitAsync(ct).ConfigureAwait(false);
         return new AsyncLockHandle(asyncLock, key, this);
     }
 
@@ -227,39 +201,30 @@ internal sealed class AsyncKeyedLocker
         }
     }
 
-    public readonly struct AsyncLockHandle : IDisposable, IAsyncDisposable
+    public readonly struct AsyncLockHandle(AsyncLock asyncLock, string key, AsyncKeyedLocker locker)
+        : IDisposable, IAsyncDisposable
     {
-        private readonly AsyncLock _asyncLock;
-        private readonly string _key;
-        private readonly AsyncKeyedLocker _locker;
-
-        public AsyncLockHandle(AsyncLock asyncLock, string key, AsyncKeyedLocker locker)
+        public ValueTask DisposeAsync()
         {
-            _asyncLock = asyncLock;
-            _key = key;
-            _locker = locker;
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            _asyncLock.Release();
-            _locker.ReleaseLock(_key);
-            await Task.CompletedTask;
+            asyncLock.Release();
+            locker.ReleaseLock(key);
+            return ValueTask.CompletedTask;
         }
 
         public void Dispose()
         {
-            _asyncLock.Release();
-            _locker.ReleaseLock(_key);
+            asyncLock.Release();
+            locker.ReleaseLock(key);
         }
     }
 }
 
-internal sealed class AsyncLock
+internal sealed class AsyncLock : IDisposable
 {
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
-    public async Task WaitAsync() => await _semaphore.WaitAsync();
+    public Task WaitAsync(CancellationToken ct = default) => _semaphore.WaitAsync(ct);
     public void Wait() => _semaphore.Wait();
     public void Release() => _semaphore.Release();
+    public void Dispose() => _semaphore.Dispose();
 }

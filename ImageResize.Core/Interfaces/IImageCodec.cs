@@ -15,11 +15,11 @@ public interface IImageCodec
         CancellationToken ct = default);
 
     /// <summary>
-    /// Decodes, resizes (fit), and encodes back to original format.
+    /// Decodes, resizes (fit), and encodes back to the original format.
     /// </summary>
     Task<(Stream Output, string ContentType, int OutW, int OutH)> ResizeAsync(
         Stream input,
         string? originalContentType,
-        ResizeOptions options,
+        ResizeOptions resizeOptions,
         CancellationToken ct = default);
 }

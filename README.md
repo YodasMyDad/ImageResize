@@ -22,9 +22,10 @@ Windows 11 context menu integration for quick image resizing. Right-click any im
 - **Disk caching**: Atomic writes with configurable sharding and size management
 - **HTTP caching**: ETags, Last-Modified, Cache-Control headers
 - **Concurrency safe**: Prevents thundering herd with keyed locks
-- **Security**: Path traversal protection and bounds validation
+- **Security**: Path traversal protection, bounds validation, and `MaxSourceBytes` decompression-bomb guard
+- **Options validation**: `IValidateOptions` fails startup on misconfiguration
+- **Debuggable**: Ships with SourceLink + symbol package (`.snupkg`) — step straight into library source
 - **Backend support**: Extensible codec architecture (SkiaSharp, future backends)
-- **ImageSharp Compatibility Layer**: Drop-in replacement for common ImageSharp operations
 - **OSS-friendly**: MIT licensed with no commercial restrictions
 
 ## Installation
@@ -140,6 +141,7 @@ GET /assets/icon.png?width=128  # Ignored, served by static files middleware
     "AllowUpscale": false,                 // Prevent enlarging images beyond original size
     "DefaultQuality": 99,                  // Default JPEG/WebP quality (1-100)
     "PngCompressionLevel": 6,              // PNG compression level (0-9)
+    "MaxSourceBytes": 268435456,           // Max accepted source size in bytes (256 MiB). 0 disables.
     "Bounds": {
       "MinWidth": 16, "MaxWidth": 4096,    // Width limits in pixels
       "MinHeight": 16, "MaxHeight": 4096,  // Height limits in pixels
@@ -276,12 +278,12 @@ using var resized = await resizerService.ResizeToFitAsync(stream, 1920, 1080);
 
 ## Cache Design
 
-- **Key generation**: SHA1 hash of normalized path + options + source signature
+- **Key generation**: XxHash128 of normalized path + options + source signature (v3.1+; SHA1 prior)
 - **Source signature**: Last modified time + file size (+ optional content hash)
 - **Atomic writes**: Temp file → rename for consistency
 - **Folder sharding**: Configurable subfolder splitting (e.g., `ab/cd/hash.ext`)
 - **Size management**: Automatic cleanup when `MaxCacheBytes` exceeded
-- **Startup pruning**: Optional cleanup of old files on application startup
+- **Startup pruning**: Optional cleanup of old files on application startup; orphaned `.tmp` files older than 1 hour are always swept
 
 ## Supported Formats
 

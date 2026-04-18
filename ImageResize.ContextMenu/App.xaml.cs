@@ -1,3 +1,9 @@
+using System.IO;
+using System.IO.Pipes;
+using System.Security.Principal;
+using System.Text;
+using System.Windows;
+using System.Windows.Threading;
 using ImageResize.Core.Codecs;
 using ImageResize.Core.Configuration;
 using ImageResize.Core.Interfaces;
@@ -6,153 +12,169 @@ using ImageResize.ContextMenu.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.IO;
-using System.IO.Pipes;
-using System.Security.Principal;
-using System.Text;
-using System.Windows;
 
 namespace ImageResize.ContextMenu;
 
 public partial class App : Application
 {
-    public static IServiceProvider Services { get; private set; } = null!;
-    private Mutex? _singleInstanceMutex;
-    private CancellationTokenSource? _ipcCts;
     private const string MutexName = @"Global\ImageResize.ContextMenu.SingleInstance";
-    private static string GetPipeName()
-    {
-        // Per-user pipe to avoid cross-user interference
-        var sid = WindowsIdentity.GetCurrent()?.User?.Value ?? "Default";
-        return $"ImageResize.ContextMenu.Pipe.{sid}";
-    }
-    private static string GetLogPath()
-    {
-        var baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ImageResize", "ContextMenu");
-        Directory.CreateDirectory(baseDir);
-        return Path.Combine(baseDir, "log.txt");
-    }
-    private static void SafeLog(string message)
-    {
-        try
-        {
-            File.AppendAllText(GetLogPath(), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
-        }
-        catch { }
-    }
-    
+    private const int ClientConnectTimeoutMs = 2000;
+    private const int ClientRetryAttempts = 5;
+    private const int ClientRetryDelayMs = 200;
+
+    public static IServiceProvider Services { get; private set; } = null!;
+
+    private Mutex? _singleInstanceMutex;
+    private bool _ownsMutex;
+    private CancellationTokenSource? _ipcCts;
+
     public App()
     {
         ConfigureServices();
+
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
     }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        // Ensure single-instance behavior. If an instance is already running,
-        // forward our arguments to it and exit immediately.
-        var createdNew = false;
-        _singleInstanceMutex = new Mutex(initiallyOwned: true, name: MutexName, createdNew: out createdNew);
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, name: MutexName, createdNew: out var createdNew);
+        _ownsMutex = createdNew;
 
         if (!createdNew)
         {
-            // Forward args to existing instance via named pipe
-            var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
-            SafeLog($"Secondary instance. Forwarding {args.Length} arg(s). First='{args.FirstOrDefault()}'");
-            if (args.Length > 0)
-            {
-                try
-                {
-                    var pipeName = GetPipeName();
-                    // Retry a few times in case the server is still initializing
-                    for (var attempt = 0; attempt < 5; attempt++)
-                    {
-                        try
-                        {
-                            using var client = new NamedPipeClientStream(
-                                ".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
-                            client.Connect(timeout: 500);
-                            using var writer = new StreamWriter(client, new UTF8Encoding(false)) { AutoFlush = true };
-                            // Send each path on its own line
-                            foreach (var a in args)
-                            {
-                                if (File.Exists(a))
-                                {
-                                    SafeLog($" -> send '{a}'");
-                                    writer.WriteLine(a);
-                                }
-                            }
-                            // Terminate with an empty line
-                            writer.WriteLine();
-                            // Give the pipe time to flush
-                            client.Flush();
-                            break;
-                        }
-                        catch
-                        {
-                            Thread.Sleep(200);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Ignore any IPC errors; just exit.
-                }
-            }
-
+            ForwardArgsToRunningInstance(Environment.GetCommandLineArgs().Skip(1).ToArray());
             Shutdown();
             return;
         }
 
-        // Primary instance: start IPC server to receive additional files
         StartIpcServer();
 
         var mainWindow = Services.GetRequiredService<MainWindow>();
-        // Log startup args for the primary instance too
         var startupArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
         SafeLog($"Primary instance. Startup args: {startupArgs.Length}. First='{startupArgs.FirstOrDefault()}'");
         mainWindow.Show();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        base.OnExit(e);
+        try { _ipcCts?.Cancel(); } catch (ObjectDisposedException) { }
+        _ipcCts?.Dispose();
+
+        if (_ownsMutex && _singleInstanceMutex is not null)
+        {
+            try { _singleInstanceMutex.ReleaseMutex(); }
+            catch (ApplicationException) { /* not held on this thread */ }
+        }
+        _singleInstanceMutex?.Dispose();
+    }
+
+    private static string GetPipeName()
+    {
+        var sid = WindowsIdentity.GetCurrent()?.User?.Value ?? "Default";
+        return $"ImageResize.ContextMenu.Pipe.{sid}";
+    }
+
+    private static string GetLogPath()
+    {
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ImageResize", "ContextMenu");
+        Directory.CreateDirectory(baseDir);
+        return Path.Combine(baseDir, "log.txt");
+    }
+
+    private static void SafeLog(string message)
+    {
+        try
+        {
+            File.AppendAllText(
+                GetLogPath(),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    private static void SafeLog(Exception ex, string context)
+        => SafeLog($"{context}: {ex.GetType().Name}: {ex.Message}");
+
+    private static void ForwardArgsToRunningInstance(string[] args)
+    {
+        SafeLog($"Secondary instance. Forwarding {args.Length} arg(s). First='{args.FirstOrDefault()}'");
+        if (args.Length == 0)
+            return;
+
+        var pipeName = GetPipeName();
+
+        for (var attempt = 0; attempt < ClientRetryAttempts; attempt++)
+        {
+            try
+            {
+                using var client = new NamedPipeClientStream(
+                    ".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+                client.Connect(ClientConnectTimeoutMs);
+
+                using var writer = new StreamWriter(client, new UTF8Encoding(false)) { AutoFlush = true };
+                foreach (var a in args)
+                {
+                    if (File.Exists(a))
+                    {
+                        SafeLog($" -> send '{a}'");
+                        writer.WriteLine(a);
+                    }
+                }
+                writer.WriteLine();
+                client.Flush();
+                return;
+            }
+            catch (TimeoutException ex)
+            {
+                SafeLog(ex, $"IPC forward attempt {attempt + 1}: pipe busy");
+            }
+            catch (IOException ex)
+            {
+                SafeLog(ex, $"IPC forward attempt {attempt + 1}");
+            }
+            Thread.Sleep(ClientRetryDelayMs);
+        }
+
+        SafeLog("IPC forward failed after retries; giving up.");
     }
 
     private void ConfigureServices()
     {
         var services = new ServiceCollection();
 
-        // Configure logging
         services.AddLogging(builder =>
         {
             builder.AddDebug();
             builder.SetMinimumLevel(LogLevel.Information);
         });
 
-        // Configure ImageResize options (minimal config for desktop usage)
         services.Configure<ImageResizeOptions>(options =>
         {
             options.DefaultQuality = 99;
             options.PngCompressionLevel = 6;
             options.AllowUpscale = false;
             options.Backend = ImageBackend.SkiaSharp;
-            // WebRoot not needed for desktop usage
             options.WebRoot = string.Empty;
         });
 
-        // Register ImageResize core services
         services.AddSingleton<IImageCodec, SkiaCodec>();
         services.AddSingleton<IImageResizerService>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<ImageResizeOptions>>();
             var codec = sp.GetRequiredService<IImageCodec>();
             var logger = sp.GetRequiredService<ILogger<ImageResizerService>>();
-            
-            // Create a minimal cache implementation (not used for desktop, but required)
             var cache = new NullImageCache();
-            
             return new ImageResizerService(options, cache, codec, logger);
         });
 
-        // Register application services
         services.AddSingleton<ImageProcessor>();
         services.AddTransient<MainWindow>();
 
@@ -165,22 +187,25 @@ public partial class App : Application
         var ct = _ipcCts.Token;
         var pipeName = GetPipeName();
 
-        Task.Run(async () =>
+        _ = Task.Run(async () =>
         {
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    using var server = new NamedPipeServerStream(
-                        pipeName, PipeDirection.In, maxNumberOfServerInstances: 1,
-                        transmissionMode: PipeTransmissionMode.Byte, options: PipeOptions.Asynchronous);
+                    await using var server = new NamedPipeServerStream(
+                        pipeName,
+                        PipeDirection.In,
+                        NamedPipeServerStream.MaxAllowedServerInstances,
+                        PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous);
 
                     await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
 
                     using var reader = new StreamReader(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
                     var received = new List<string>();
                     string? line;
-                    while ((line = await reader.ReadLineAsync().ConfigureAwait(false)) != null)
+                    while ((line = await reader.ReadLineAsync(ct).ConfigureAwait(false)) != null)
                     {
                         if (string.IsNullOrWhiteSpace(line))
                             break;
@@ -190,7 +215,6 @@ public partial class App : Application
 
                     if (received.Count > 0)
                     {
-                        // Marshal to UI thread and add files to the existing window
                         await Dispatcher.InvokeAsync(() =>
                         {
                             if (Current?.MainWindow is MainWindow mw)
@@ -200,8 +224,6 @@ public partial class App : Application
                                 if (mw.WindowState == WindowState.Minimized)
                                     mw.WindowState = WindowState.Normal;
                                 mw.Activate();
-                                mw.Topmost = true;  // ensure front
-                                mw.Topmost = false;
                                 mw.Focus();
                             }
                         });
@@ -209,36 +231,54 @@ public partial class App : Application
                 }
                 catch (OperationCanceledException)
                 {
-                    // Shutting down
                     break;
                 }
-                catch
+                catch (IOException ex)
                 {
-                    // Swallow and continue listening
+                    SafeLog(ex, "IPC server I/O error");
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
                 }
             }
         }, ct);
     }
 
-    protected override void OnExit(ExitEventArgs e)
+    private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        base.OnExit(e);
-        try { _ipcCts?.Cancel(); } catch { }
-        try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
-        _ipcCts?.Dispose();
-        _singleInstanceMutex?.Dispose();
+        SafeLog(e.Exception, "Dispatcher unhandled");
+        try
+        {
+            MessageBox.Show(
+                MainWindow,
+                $"An unexpected error occurred:\n\n{e.Exception.Message}\n\nSee the log in\n%LocalAppData%\\ImageResize\\ContextMenu\\log.txt",
+                "Resize Images",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        catch (InvalidOperationException) { /* app shutting down */ }
+        e.Handled = true;
+    }
+
+    private static void OnAppDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        if (e.ExceptionObject is Exception ex)
+            SafeLog(ex, $"AppDomain unhandled (terminating={e.IsTerminating})");
+    }
+
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        SafeLog(e.Exception, "Unobserved task exception");
+        e.SetObserved();
     }
 }
 
 // Minimal null cache implementation for desktop usage
-internal class NullImageCache : IImageCache
+internal sealed class NullImageCache : IImageCache
 {
     public Task<bool> ExistsAsync(string path, CancellationToken ct = default) => Task.FromResult(false);
-    
-    public string GetCachedFilePath(string relativePath, ImageResize.Models.ResizeOptions options, string sourceSignature) => string.Empty;
-    
+    public string GetCachedFilePath(string relativePath, ImageResize.Models.ResizeOptions resizeOptions, string sourceSignature) => string.Empty;
     public Task WriteAtomicallyAsync(string path, Stream data, CancellationToken ct = default) => Task.CompletedTask;
-    
     public Task<Stream> OpenReadAsync(string path, CancellationToken ct = default) => Task.FromResult(Stream.Null);
 }
-

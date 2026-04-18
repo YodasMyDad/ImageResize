@@ -6,7 +6,7 @@ Orientation for Claude / new agents working in this repo. Keep this file short a
 
 ImageResize is a minimal, cross-platform image-resize middleware for ASP.NET Core, backed by SkiaSharp, plus a Windows desktop companion app that exposes the same engine through an Explorer context-menu.
 
-- Current version: **3.0.0** (published as the `ImageResize` NuGet package)
+- Current version: **3.1.0** (published as the `ImageResize` NuGet package). Version lives in [Directory.Build.props](Directory.Build.props) — do NOT re-add `<Version>` in any csproj.
 - Target runtime: **.NET 10** (`net10.0`, plus `net10.0-windows` for the WPF app)
 - License: MIT
 
@@ -50,12 +50,12 @@ Output: `publish/installer/ImageResize-ContextMenu-Setup-*.exe`.
 
 ## Key architectural patterns
 
-- DI + middleware registration: `AddImageResize()` / `UseImageResize()` in [ImageResizeServiceCollectionExtensions.cs](ImageResize.Core/Extensions/ImageResizeServiceCollectionExtensions.cs).
+- DI + middleware registration: `AddImageResize()` / `UseImageResize()` in [ImageResizeServiceCollectionExtensions.cs](ImageResize.Core/Extensions/ImageResizeServiceCollectionExtensions.cs). Registers `IValidateOptions<ImageResizeOptions>` with validate-on-start.
 - Pluggable interfaces in [ImageResize.Core/Interfaces/](ImageResize.Core/Interfaces/): `IImageResizerService`, `IImageCodec`, `IImageCache`.
 - Thundering-herd protection via `AsyncKeyedLocker` in [ImageResizerService.cs](ImageResize.Core/Services/ImageResizerService.cs).
-- Atomic cache writes (temp file → flush → rename) + SHA1-keyed folder sharding in [FileSystemImageCache.cs](ImageResize.Core/Cache/FileSystemImageCache.cs).
-- Options-pattern config in [ImageResizeOptions.cs](ImageResize.Core/Configuration/ImageResizeOptions.cs) with nested `Bounds` / `Cache` / `ResponseCache` sub-options.
-- ContextMenu single-instance + IPC (mutex + named pipe) in [App.xaml.cs](ImageResize.ContextMenu/App.xaml.cs).
+- Atomic cache writes (temp file → flush → rename) + XxHash128-keyed folder sharding in [FileSystemImageCache.cs](ImageResize.Core/Cache/FileSystemImageCache.cs). Hashing helpers centralised in [HashingUtilities.cs](ImageResize.Core/Utilities/HashingUtilities.cs).
+- Options-pattern config in [ImageResizeOptions.cs](ImageResize.Core/Configuration/ImageResizeOptions.cs) with nested `Bounds` / `Cache` / `ResponseCache` sub-options and a `MaxSourceBytes` decompression-bomb cap; validated by [ImageResizeOptionsValidator.cs](ImageResize.Core/Configuration/ImageResizeOptionsValidator.cs).
+- ContextMenu single-instance + IPC (mutex + named pipe) in [App.xaml.cs](ImageResize.ContextMenu/App.xaml.cs). Version-string resolution in [VersionInfo.cs](ImageResize.ContextMenu/VersionInfo.cs) (reads `AssemblyInformationalVersion` → flows from `Directory.Build.props`).
 
 ## Entry points
 
@@ -73,7 +73,8 @@ Output: `publish/installer/ImageResize-ContextMenu-Setup-*.exe`.
 
 - Nullable reference types on across all projects; treat warnings seriously.
 - Common usings live in [GlobalUsings.cs](ImageResize.Core/GlobalUsings.cs) — prefer adding there over per-file `using` duplication.
-- No `.editorconfig`, no CI workflows — this is a local-build / manual-release repo.
+- Common language/versioning settings live in [Directory.Build.props](Directory.Build.props); package versions in [Directory.Packages.props](Directory.Packages.props) (CPM is on — omit `Version=` on `<PackageReference>`).
+- [.editorconfig](.editorconfig) enforces formatting and nullability-as-error. CI runs via [.github/workflows/build.yml](.github/workflows/build.yml).
 - No test coverage for the WPF app — changes in [ImageResize.ContextMenu/](ImageResize.ContextMenu/) must be smoke-tested by running the app.
 
 ## Don'ts / gotchas

@@ -1,8 +1,6 @@
-using ImageResize.Core.Codecs;
 using ImageResize.Core.Interfaces;
 using ImageResize.Core.Models;
 using ImageResize.Models;
-using Microsoft.Extensions.Options;
 
 namespace ImageResize.Core.Extensions;
 

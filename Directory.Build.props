@@ -1,0 +1,29 @@
+<Project>
+
+    <PropertyGroup Label="Language / compiler">
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <LangVersion>latest</LangVersion>
+        <AnalysisLevel>latest-recommended</AnalysisLevel>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    </PropertyGroup>
+
+    <PropertyGroup Label="Version">
+        <Version>3.1.0</Version>
+        <AssemblyVersion>3.1.0.0</AssemblyVersion>
+        <FileVersion>3.1.0.0</FileVersion>
+        <InformationalVersion>3.1.0</InformationalVersion>
+    </PropertyGroup>
+
+    <PropertyGroup Label="Authorship">
+        <Authors>Lee Messenger</Authors>
+        <Company>ImageResize</Company>
+        <Copyright>Copyright © Lee Messenger</Copyright>
+    </PropertyGroup>
+
+    <PropertyGroup Label="Build reproducibility">
+        <Deterministic>true</Deterministic>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+</Project>
