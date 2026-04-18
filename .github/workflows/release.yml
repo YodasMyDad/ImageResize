@@ -129,10 +129,41 @@ jobs:
           name: installers
           path: publish/installer/*.exe
 
+  build-dmg:
+    name: Build ContextMenu DMG (macos)
+    runs-on: macos-latest
+    needs: build-library
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore bumped Directory.Build.props
+        uses: actions/download-artifact@v4
+        with:
+          name: bumped-props
+          path: .
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build universal .app + .dmg
+        run: ./build-macos.sh Release
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg
+          path: publish/installer/*.dmg
+
   publish:
     name: Publish to nuget.org + GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-library, build-installer]
+    needs: [build-library, build-installer, build-dmg]
     if: ${{ inputs.dry_run != true }}
     steps:
       - uses: actions/checkout@v4
@@ -148,6 +179,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: installers
+          path: release/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dmg
           path: release/
 
       - uses: actions/download-artifact@v4
@@ -194,6 +230,7 @@ jobs:
             release/ImageResize.*.nupkg
             release/ImageResize.*.snupkg
             release/ImageResize-ContextMenu-Setup-*.exe
+            release/ImageResize-ContextMenu-Setup-*.dmg
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(needs.build-library.outputs.version, '-') }}
