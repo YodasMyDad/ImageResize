@@ -110,6 +110,12 @@ jobs:
           name: bumped-props
           path: .
 
+      - name: Restore nupkgs (needed by ContextMenu's nuget.config local source)
+        uses: actions/download-artifact@v4
+        with:
+          name: nupkgs
+          path: nupkgs
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
