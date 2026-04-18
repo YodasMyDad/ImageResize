@@ -314,12 +314,37 @@ public partial class MainWindow : Window
 
             Close();
         }
+        catch (BatchResizeException batchEx)
+        {
+            ShowError(FormatBatchFailure(batchEx));
+            ResizeButton.IsEnabled = true;
+            CancelButton.IsEnabled = true;
+            ProgressPanel.Visibility = Visibility.Collapsed;
+        }
         catch (Exception ex)
         {
             ShowError($"Failed to resize images: {ex.Message}");
             ResizeButton.IsEnabled = true;
             CancelButton.IsEnabled = true;
             ProgressPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static string FormatBatchFailure(BatchResizeException ex)
+    {
+        if (ex.SuccessCount == 0)
+        {
+            var header = $"All {ex.TotalCount} files failed. Check folder permissions or OneDrive sync status.";
+            var details = string.Join(Environment.NewLine,
+                ex.Failures.Select(f => $"  \u2022 {Path.GetFileName(f.Path)}: {f.Reason}"));
+            return $"{header}{Environment.NewLine}{details}";
+        }
+        else
+        {
+            var header = $"{ex.SuccessCount} of {ex.TotalCount} succeeded, {ex.Failures.Count} failed:";
+            var details = string.Join(Environment.NewLine,
+                ex.Failures.Select(f => $"  \u2022 {Path.GetFileName(f.Path)}: {f.Reason}"));
+            return $"{header}{Environment.NewLine}{details}";
         }
     }
 
