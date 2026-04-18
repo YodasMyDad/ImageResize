@@ -11,7 +11,8 @@
 #ifndef MyAppVersion
   #define MyAppVersion GetFileVersion("..\publish\" + Platform + "\ImageResize.ContextMenu.exe")
 #endif
-#define MyAppPublisher "ImageResize"
+; Must match the Authenticode certificate subject once signing is wired up (see plan).
+#define MyAppPublisher "Lee Messenger"
 #define MyAppURL "https://github.com/YodasMyDad/ImageResize"
 #define MyAppExeName "ImageResize.ContextMenu.exe"
 
@@ -31,7 +32,7 @@ LicenseFile=..\LICENSE.txt
 PrivilegesRequired=admin
 OutputDir=..\publish\installer
 OutputBaseFilename=ImageResize-ContextMenu-Setup-{#MyAppVersion}-{#Platform}
-; SetupIconFile=Assets\icon.ico
+SetupIconFile=Assets\icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

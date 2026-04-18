@@ -23,6 +23,18 @@
         <PackageVersion Include="System.IO.Hashing" Version="10.0.6" />
     </ItemGroup>
 
+    <ItemGroup Label="Avalonia (ContextMenu desktop UI)">
+        <PackageVersion Include="Avalonia" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Desktop" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Fonts.Inter" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Diagnostics" Version="11.2.5" />
+        <PackageVersion Include="MessageBox.Avalonia" Version="3.3.1.1" />
+        <!-- Pin Tmds.DBus.Protocol past GHSA-xrw6-gwf8-vvr9 (fixed in 0.21.0+). Avalonia 11.2.5
+             pulls a vulnerable 0.20.0 transitively; the explicit ref below overrides that. -->
+        <PackageVersion Include="Tmds.DBus.Protocol" Version="0.92.0" />
+    </ItemGroup>
+
     <ItemGroup Label="SourceLink">
         <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
     </ItemGroup>

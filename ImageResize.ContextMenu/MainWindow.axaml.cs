@@ -1,10 +1,16 @@
 using System.Collections;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Windows;
-using System.Windows.Input;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using ImageResize.ContextMenu.Models;
 using ImageResize.ContextMenu.Services;
 using Microsoft.CSharp.RuntimeBinder;
@@ -36,7 +42,20 @@ public partial class MainWindow : Window
 
         Title = $"Resize Images — v{VersionInfo.AppVersion}";
 
-        Loaded += async (_, _) => await InitializeAsync().ConfigureAwait(false);
+        AddHandler(DragDrop.DragOverEvent, Window_DragOver);
+        AddHandler(DragDrop.DropEvent, Window_Drop);
+        KeyDown += OnKeyDown;
+
+        Opened += async (_, _) => await InitializeAsync().ConfigureAwait(false);
+    }
+
+    private void OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F1)
+        {
+            ShowAbout();
+            e.Handled = true;
+        }
     }
 
     private async Task InitializeAsync()
@@ -55,15 +74,15 @@ public partial class MainWindow : Window
             // No command-line args means Windows didn't pass the selection (typical for Desktop
             // shell-verb invocations). Try the Desktop listview first — a stale selection in a
             // background Explorer window would otherwise hijack the result.
-            if (initial.Count == 0)
+            if (initial.Count == 0 && OperatingSystem.IsWindows())
                 initial = GetSelectedDesktopImagePaths();
 
-            if (initial.Count == 0)
+            if (initial.Count == 0 && OperatingSystem.IsWindows())
                 initial = GetSelectedExplorerImagePaths();
 
             if (initial.Count == 0)
             {
-                Dispatcher.Invoke(() =>
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     ShowInfo("No valid image files were provided. Please select images and use the context menu, or drag images onto this window.");
                     ResizeButton.IsEnabled = false;
@@ -76,19 +95,19 @@ public partial class MainWindow : Window
 
             var imageInfo = await _imageProcessor.GetImageInfoAsync(_imagePaths[0]).ConfigureAwait(false);
 
-            Dispatcher.Invoke(() =>
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 _originalWidth = imageInfo.Width;
                 _originalHeight = imageInfo.Height;
                 RefreshHeader();
-                WidthBox.Text = _originalWidth.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                HeightBox.Text = _originalHeight.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                WidthBox.Text = _originalWidth.ToString(CultureInfo.InvariantCulture);
+                HeightBox.Text = _originalHeight.ToString(CultureInfo.InvariantCulture);
                 ConfigureUiForMode();
             });
         }
         catch (Exception ex)
         {
-            Dispatcher.Invoke(() =>
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 ShowError($"Failed to load image: {ex.Message}");
                 ResizeButton.IsEnabled = false;
@@ -104,13 +123,13 @@ public partial class MainWindow : Window
             OriginalDimensionsText.Text = _originalWidth > 0 && _originalHeight > 0
                 ? $"Original: {_originalWidth} × {_originalHeight} px"
                 : string.Empty;
-            OriginalDimensionsText.Visibility = Visibility.Visible;
+            OriginalDimensionsText.IsVisible = true;
         }
         else
         {
             FileCountText.Text = $"Resizing {_imagePaths.Count} images";
             OriginalDimensionsText.Text = string.Empty;
-            OriginalDimensionsText.Visibility = Visibility.Collapsed;
+            OriginalDimensionsText.IsVisible = false;
         }
     }
 
@@ -171,6 +190,7 @@ public partial class MainWindow : Window
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static List<string> GetSelectedExplorerImagePaths()
     {
         var results = new List<string>();
@@ -225,6 +245,7 @@ public partial class MainWindow : Window
     // Reads the Windows Desktop's current selection by talking to the Progman/WorkerW SysListView32
     // directly. Needed because Shell.Application.Windows() does not expose the Desktop, and Windows
     // does not pass %* command-line args to shell verbs invoked from the Desktop.
+    [SupportedOSPlatform("windows")]
     private static List<string> GetSelectedDesktopImagePaths()
     {
         var results = new List<string>();
@@ -308,7 +329,6 @@ public partial class MainWindow : Window
             var direct = Path.Combine(root, name);
             if (File.Exists(direct)) return direct;
 
-            // "Hide extensions of known file types" is on — try known image extensions.
             if (string.IsNullOrEmpty(Path.GetExtension(name)))
             {
                 foreach (var ext in ImageExtensions)
@@ -321,9 +341,9 @@ public partial class MainWindow : Window
         return string.Empty;
     }
 
+    [SupportedOSPlatform("windows")]
     private static IntPtr FindDesktopListView()
     {
-        // Classic path: Progman > SHELLDLL_DefView > SysListView32
         var hProgman = FindWindow("Progman", null);
         if (hProgman != IntPtr.Zero)
         {
@@ -335,8 +355,6 @@ public partial class MainWindow : Window
             }
         }
 
-        // Wallpaper slideshow / some Win10+ configs reparent SHELLDLL_DefView into a WorkerW
-        // sibling of Progman. Enumerate top-level WorkerW windows and probe each.
         IntPtr found = IntPtr.Zero;
         var classBuf = new char[32];
         EnumWindows((hWnd, _) =>
@@ -443,20 +461,19 @@ public partial class MainWindow : Window
     {
         if (_isMultipleImages)
         {
-            DimensionsPanel.Visibility = Visibility.Collapsed;
+            DimensionsPanel.IsVisible = false;
             PercentageLabel.Text = "Size Percentage (applies to all images)";
             OriginalDimensionsText.Text = string.Empty;
-            OriginalDimensionsText.Visibility = Visibility.Collapsed;
+            OriginalDimensionsText.IsVisible = false;
         }
         else
         {
-            DimensionsPanel.Visibility = Visibility.Visible;
+            DimensionsPanel.IsVisible = true;
             PercentageLabel.Text = "Size Percentage";
-            OriginalDimensionsText.Visibility = Visibility.Visible;
+            OriginalDimensionsText.IsVisible = true;
         }
     }
 
-    // Called by App when a secondary instance forwards more files
     public void AddFiles(IEnumerable<string> files)
     {
         if (_resizeInProgress) return;
@@ -481,15 +498,15 @@ public partial class MainWindow : Window
 
         if (!_isMultipleImages && _originalWidth > 0 && _originalHeight > 0)
         {
-            WidthBox.Text = _originalWidth.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            HeightBox.Text = _originalHeight.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            WidthBox.Text = _originalWidth.ToString(CultureInfo.InvariantCulture);
+            HeightBox.Text = _originalHeight.ToString(CultureInfo.InvariantCulture);
         }
 
-        ErrorBorder.Visibility = Visibility.Collapsed;
+        ErrorBorder.IsVisible = false;
         ResizeButton.IsEnabled = true;
     }
 
-    private void PercentageSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void PercentageSlider_ValueChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         if (_isUpdatingFromTextBox || _originalWidth == 0 || _originalHeight == 0)
             return;
@@ -501,13 +518,13 @@ public partial class MainWindow : Window
         if (!_isMultipleImages)
         {
             var scale = percentage / 100.0;
-            WidthBox.Text = ((int)Math.Round(_originalWidth * scale)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-            HeightBox.Text = ((int)Math.Round(_originalHeight * scale)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            WidthBox.Text = ((int)Math.Round(_originalWidth * scale)).ToString(CultureInfo.InvariantCulture);
+            HeightBox.Text = ((int)Math.Round(_originalHeight * scale)).ToString(CultureInfo.InvariantCulture);
         }
         _isUpdatingFromSlider = false;
     }
 
-    private void DimensionBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    private void DimensionBox_TextChanged(object? sender, TextChangedEventArgs e)
     {
         if (_isUpdatingFromSlider || _originalWidth == 0 || _originalHeight == 0 || _isMultipleImages)
             return;
@@ -522,13 +539,13 @@ public partial class MainWindow : Window
         _isUpdatingFromTextBox = false;
     }
 
-    private void QualitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void QualitySlider_ValueChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         if (QualityText != null)
-            QualityText.Text = ((int)e.NewValue).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            QualityText.Text = ((int)e.NewValue).ToString(CultureInfo.InvariantCulture);
     }
 
-    private async void ResizeButton_Click(object sender, RoutedEventArgs e)
+    private async void ResizeButton_Click(object? sender, RoutedEventArgs e)
     {
         if (_imagePaths.Count == 0)
         {
@@ -544,8 +561,8 @@ public partial class MainWindow : Window
         {
             ResizeButton.IsEnabled = false;
             CancelButton.Content = "Stop";
-            ProgressPanel.Visibility = Visibility.Visible;
-            ErrorBorder.Visibility = Visibility.Collapsed;
+            ProgressPanel.IsVisible = true;
+            ErrorBorder.IsVisible = false;
             ProgressBar.Value = 0;
             ProgressText.Text = "Starting…";
             ProgressEtaText.Text = string.Empty;
@@ -617,7 +634,7 @@ public partial class MainWindow : Window
     {
         ResizeButton.IsEnabled = true;
         CancelButton.Content = "Cancel";
-        ProgressPanel.Visibility = Visibility.Collapsed;
+        ProgressPanel.IsVisible = false;
     }
 
     private static string FormatDuration(TimeSpan ts)
@@ -639,7 +656,7 @@ public partial class MainWindow : Window
         return $"{header}{Environment.NewLine}{failures}";
     }
 
-    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    private void CancelButton_Click(object? sender, RoutedEventArgs e)
     {
         if (_resizeInProgress)
         {
@@ -653,57 +670,71 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AboutButton_Click(object sender, RoutedEventArgs e) => ShowAbout();
-
-    private void Help_Executed(object sender, System.Windows.Input.ExecutedRoutedEventArgs e) => ShowAbout();
+    private void AboutButton_Click(object? sender, RoutedEventArgs e) => ShowAbout();
 
     public void ShowAbout()
     {
-        var dlg = new AboutWindow { Owner = this };
-        dlg.ShowDialog();
+        var dlg = new AboutWindow();
+        _ = dlg.ShowDialog(this);
     }
 
-    private void Window_DragOver(object sender, DragEventArgs e)
+    private void Window_DragOver(object? sender, DragEventArgs e)
     {
-        e.Effects = HasImageFiles(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.DragEffects = HasImageFiles(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
-    private void Window_Drop(object sender, DragEventArgs e)
+    private void Window_Drop(object? sender, DragEventArgs e)
     {
         if (_resizeInProgress) return;
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+
+        var files = ExtractImageFilePaths(e.Data);
+        if (files.Count == 0) return;
 
         AddFiles(files);
         e.Handled = true;
     }
 
     private static bool HasImageFiles(IDataObject data)
+        => ExtractImageFilePaths(data).Count > 0;
+
+    private static List<string> ExtractImageFilePaths(IDataObject data)
     {
-        if (data.GetData(DataFormats.FileDrop) is not string[] files)
-            return false;
-        return files.Any(IsImageFile);
+        var result = new List<string>();
+        var files = data.GetFiles();
+        if (files == null) return result;
+
+        foreach (var item in files)
+        {
+            var path = item.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path) && IsImageFile(path))
+                result.Add(path);
+        }
+        return result;
     }
 
     private void ShowInfo(string message)
     {
         ErrorHeading.Text = "Info";
         ErrorText.Text = message;
-        ErrorBorder.Visibility = Visibility.Visible;
+        ErrorBorder.IsVisible = true;
     }
 
     private void ShowError(string message)
     {
         ErrorHeading.Text = "Error";
         ErrorText.Text = message;
-        ErrorBorder.Visibility = Visibility.Visible;
+        ErrorBorder.IsVisible = true;
     }
 
     private static bool IsImageFile(string path)
         => ImageExtensions.Contains(Path.GetExtension(path));
 
-    private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
-        => e.Handled = NumberOnly.IsMatch(e.Text);
+    private void NumberValidationTextBox(object? sender, TextInputEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(e.Text) && NumberOnly.IsMatch(e.Text))
+            e.Handled = true;
+    }
 
     protected override void OnClosed(EventArgs e)
     {

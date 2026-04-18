@@ -1,22 +1,13 @@
-<Window x:Class="ImageResize.ContextMenu.AboutWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ImageResize.ContextMenu.AboutWindow"
         Title="About Resize Images"
         Width="460"
         Height="340"
-        ResizeMode="NoResize"
+        CanResize="False"
         ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
-        Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
-    <Grid Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
         <TextBlock Grid.Row="0"
                    Text="Resize Images"
@@ -39,21 +30,23 @@
             <TextBlock TextWrapping="Wrap"
                        FontSize="12"
                        Opacity="0.75"
-                       Text="Minimal, cross-platform image-resize middleware for ASP.NET Core, plus a Windows desktop companion app. Distributed under the MIT License." />
-            <TextBlock Margin="0,12,0,0" FontSize="12">
-                <Hyperlink x:Name="GitHubLink"
-                           NavigateUri="https://github.com/YodasMyDad/ImageResize"
-                           RequestNavigate="Hyperlink_RequestNavigate">
-                    github.com/YodasMyDad/ImageResize
-                </Hyperlink>
-            </TextBlock>
+                       Text="Minimal, cross-platform image-resize middleware for ASP.NET Core, plus a desktop companion app. Distributed under the MIT License." />
+            <HyperlinkButton x:Name="GitHubLink"
+                             Margin="0,8,0,0"
+                             Padding="0"
+                             FontSize="12"
+                             HorizontalAlignment="Left"
+                             Content="github.com/YodasMyDad/ImageResize"
+                             NavigateUri="https://github.com/YodasMyDad/ImageResize"/>
         </StackPanel>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="CloseButton"
                     Content="Close"
                     Width="96"
-                    Height="30"
+                    Height="32"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
                     IsDefault="True"
                     IsCancel="True"
                     Click="CloseButton_Click" />

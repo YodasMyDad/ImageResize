@@ -1,74 +1,18 @@
-<Window x:Class="ImageResize.ContextMenu.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ImageResize.ContextMenu.MainWindow"
         Title="Resize Images"
         Width="560"
         Height="680"
-        ResizeMode="NoResize"
+        CanResize="False"
         WindowStartupLocation="CenterScreen"
-        AllowDrop="True"
-        Drop="Window_Drop"
-        DragOver="Window_DragOver"
-        Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
-        Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
+        DragDrop.AllowDrop="True">
 
-    <!-- ApplicationCommands.Help defaults to F1 -->
-    <Window.CommandBindings>
-        <CommandBinding Command="ApplicationCommands.Help" Executed="Help_Executed" />
-    </Window.CommandBindings>
-
-    <Window.Resources>
-        <Style x:Key="PrimaryButton" TargetType="Button">
-            <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
-            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="12,6"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Opacity" Value="0.9"/>
-                </Trigger>
-                <Trigger Property="IsPressed" Value="True">
-                    <Setter Property="Opacity" Value="0.75"/>
-                </Trigger>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Opacity" Value="0.5"/>
-                    <Setter Property="Cursor" Value="Arrow"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="SubtleIconButton" TargetType="Button">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Padding" Value="6"/>
-        </Style>
-    </Window.Resources>
-
-    <Grid Margin="24,16,24,20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <Grid Margin="24,16,24,20"
+          RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto">
 
         <!-- Header row: file info + About button -->
-        <Grid Grid.Row="0" Margin="0,0,0,16">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <Grid Grid.Row="0" Margin="0,0,0,16" ColumnDefinitions="*,Auto">
             <StackPanel Grid.Column="0">
                 <TextBlock x:Name="FileCountText"
                            FontSize="16"
@@ -82,38 +26,40 @@
             </StackPanel>
             <Button Grid.Column="1"
                     x:Name="AboutButton"
-                    Style="{StaticResource SubtleIconButton}"
                     Content="?"
-                    Width="28"
-                    Height="28"
-                    ToolTip="About (F1)"
+                    Width="32"
+                    Height="32"
+                    Padding="0"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    CornerRadius="16"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
+                    ToolTip.Tip="About (F1)"
                     AutomationProperties.Name="About"
                     Click="AboutButton_Click"/>
         </Grid>
 
-        <!-- Drop hint -->
-        <Border Grid.Row="1"
-                x:Name="DropHintBorder"
-                Margin="0,0,0,16"
-                Padding="10,6"
-                CornerRadius="4"
-                BorderThickness="1"
-                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
-                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
-            <TextBlock Text="Tip: drag additional images onto this window to queue them."
-                       FontSize="11"
-                       Opacity="0.75"
-                       TextWrapping="Wrap"/>
-        </Border>
+        <!-- Drop zone -->
+        <Grid Grid.Row="1" x:Name="DropZone" Margin="0,0,0,16" Height="56">
+            <Rectangle x:Name="DropZoneBorder"
+                       Stroke="#66888888"
+                       StrokeThickness="1.5"
+                       StrokeDashArray="4,3"
+                       RadiusX="6"
+                       RadiusY="6"/>
+            <TextBlock Text="Drop additional images here"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Grid>
 
         <!-- Percentage Slider -->
         <StackPanel Grid.Row="2" Margin="0,0,0,20">
             <TextBlock x:Name="PercentageLabel" Text="Size Percentage" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+            <Grid ColumnDefinitions="*,Auto">
                 <Slider x:Name="PercentageSlider"
                         Minimum="10"
                         Maximum="200"
@@ -137,20 +83,14 @@
         <!-- Dimensions -->
         <StackPanel x:Name="DimensionsPanel" Grid.Row="3" Margin="0,0,0,20">
             <TextBlock Text="Target Dimensions" FontWeight="SemiBold" Margin="0,0,0,10"/>
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-
+            <Grid ColumnDefinitions="*,Auto,*">
                 <StackPanel Grid.Column="0">
                     <TextBlock Text="Width (px)" Margin="0,0,0,4"/>
                     <TextBox x:Name="WidthBox"
                              TabIndex="2"
                              AutomationProperties.Name="Target width in pixels"
                              TextChanged="DimensionBox_TextChanged"
-                             PreviewTextInput="NumberValidationTextBox"/>
+                             TextInput="NumberValidationTextBox"/>
                 </StackPanel>
 
                 <TextBlock Grid.Column="1"
@@ -166,7 +106,7 @@
                              TabIndex="3"
                              AutomationProperties.Name="Target height in pixels"
                              TextChanged="DimensionBox_TextChanged"
-                             PreviewTextInput="NumberValidationTextBox"/>
+                             TextInput="NumberValidationTextBox"/>
                 </StackPanel>
             </Grid>
         </StackPanel>
@@ -174,11 +114,7 @@
         <!-- Quality Slider -->
         <StackPanel Grid.Row="4" Margin="0,0,0,20">
             <TextBlock Text="Quality" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+            <Grid ColumnDefinitions="*,Auto">
                 <Slider x:Name="QualitySlider"
                         Minimum="10"
                         Maximum="100"
@@ -213,12 +149,8 @@
         </StackPanel>
 
         <!-- Progress -->
-        <StackPanel Grid.Row="6" Margin="0,0,0,16" x:Name="ProgressPanel" Visibility="Collapsed">
-            <Grid Margin="0,0,0,6">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+        <StackPanel Grid.Row="6" Margin="0,0,0,16" x:Name="ProgressPanel" IsVisible="False">
+            <Grid Margin="0,0,0,6" ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0"
                            x:Name="ProgressText"
                            Text="Processing..."
@@ -232,18 +164,20 @@
             <ProgressBar x:Name="ProgressBar" Height="8" Minimum="0" Maximum="100"/>
         </StackPanel>
 
-        <!-- Result summary -->
+        <!-- Result summary. Hardcoded colours: theme resources for "caution" are
+             unreliable in Avalonia 11.2.5 Fluent (see drop-zone rendering bug discovered
+             earlier). Amber at low opacity reads well in both Light and Dark. -->
         <Border Grid.Row="7"
                 x:Name="ErrorBorder"
-                Background="{DynamicResource {x:Static SystemColors.InfoBrushKey}}"
-                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                Background="#22F59E0B"
+                BorderBrush="#66F59E0B"
                 BorderThickness="1"
                 Padding="12"
                 Margin="0,0,0,16"
-                Visibility="Collapsed"
+                IsVisible="False"
                 CornerRadius="4">
             <StackPanel>
-                <TextBlock x:Name="ErrorHeading" Text="Error" FontWeight="Bold"/>
+                <TextBlock x:Name="ErrorHeading" Text="Error" FontWeight="SemiBold"/>
                 <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
@@ -257,6 +191,8 @@
                     Margin="0,0,12,0"
                     TabIndex="7"
                     IsCancel="True"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
                     Click="CancelButton_Click"/>
             <Button x:Name="ResizeButton"
                     Content="Resize"
@@ -264,7 +200,9 @@
                     Height="34"
                     TabIndex="6"
                     IsDefault="True"
-                    Style="{StaticResource PrimaryButton}"
+                    Classes="accent"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
                     Click="ResizeButton_Click"/>
         </StackPanel>
     </Grid>

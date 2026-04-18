@@ -1,6 +1,8 @@
 # ImageResize Context Menu
 
-Windows 11 context menu integration for quick image resizing. Right-click any image (or multiple images) and resize them instantly.
+Desktop integration for quick image resizing on **Windows 11** (Explorer context menu) and **macOS** (Finder → Services). Right-click any image — or multiple images — and resize them instantly.
+
+Built on Avalonia UI, so the same binary (modulo per-OS packaging) runs natively on both platforms. No WPF, no Electron.
 
 ## Features
 
@@ -15,10 +17,10 @@ Windows 11 context menu integration for quick image resizing. Right-click any im
 
 ## Quick Start
 
-### For Users (Installing)
+### Windows
 
 **Option 1: Installer (Recommended)**
-1. Download `ImageResize-ContextMenu-Setup-1.0.0.exe`
+1. Download `ImageResize-ContextMenu-Setup-<version>-x64.exe`
 2. Double-click to install
 3. Follow the wizard
 4. Right-click any image → "Resize Images..."
@@ -27,8 +29,39 @@ Windows 11 context menu integration for quick image resizing. Right-click any im
 ```powershell
 # From repository root
 .\build-installer.ps1
-# Then run: publish\installer\ImageResize-ContextMenu-Setup-1.0.0.exe
+# Then run: publish\installer\ImageResize-ContextMenu-Setup-<version>-x64.exe
 ```
+
+### macOS
+
+1. Download `ImageResize-ContextMenu-Setup-<version>-universal.dmg`
+2. Open the DMG, drag **ImageResize.app** into `Applications`
+3. Double-click **Resize Images.workflow** — macOS will offer to install it as a Finder Quick Action (copied to `~/Library/Services`)
+4. Right-click any image file in Finder → **Services → Resize Images**
+
+**First launch: Gatekeeper warning.** The app is not Authenticode-signed or notarised (no paid Apple Developer Program account), so Gatekeeper will refuse the first launch with _"ImageResize can't be opened because it is from an unidentified developer"_. Bypass it once:
+
+- In Finder: **right-click** `ImageResize.app` (or the Quick Action) → **Open**, then click **Open** again in the dialog. Subsequent launches are unprompted.
+- Alternative: **System Settings → Privacy & Security → Open Anyway** after the first blocked launch.
+- Or strip the quarantine flag from a terminal: `xattr -dr com.apple.quarantine /Applications/ImageResize.app`.
+
+**To build from source on macOS:**
+```bash
+./build-macos.sh          # produces publish/installer/ImageResize-ContextMenu-Setup-<version>-universal.dmg
+brew install create-dmg   # (optional) nicer DMG layout; falls back to hdiutil without it
+```
+
+The build produces a universal binary (arm64 + x86_64 via `lipo`), so one DMG works on both Apple Silicon and Intel Macs.
+
+### First install on Windows: SmartScreen warning
+
+On first run you'll likely see a **"Windows protected your PC — Unknown publisher"** dialog. This is because the installer isn't yet Authenticode-signed (code signing is on the roadmap). The installer is safe to run; SmartScreen flags any unsigned installer from a publisher it doesn't recognise.
+
+To proceed, use any of:
+
+- Click **More info** → **Run anyway** in the SmartScreen dialog.
+- Right-click the downloaded `.exe` → **Properties** → tick **Unblock** → **OK**, then double-click.
+- In PowerShell, before running: `Unblock-File -Path .\ImageResize-ContextMenu-Setup-*.exe`
 
 ### Usage
 
@@ -55,10 +88,9 @@ Windows 11 context menu integration for quick image resizing. Right-click any im
 
 ### Prerequisites
 
-- Windows 11
-- .NET 9.0 SDK
-- Visual Studio 2022 (optional)
-- Inno Setup 6 (for building installer)
+- .NET 10 SDK
+- **Windows builds:** Windows 10 (1809)+ and Inno Setup 6 for the installer
+- **macOS builds:** macOS 11+ with Xcode command-line tools (`xcode-select --install`) for `lipo`; `brew install create-dmg` for prettier DMGs (optional)
 
 ## Creating the Windows Installer
 
@@ -147,11 +179,12 @@ All methods work correctly and remove:
 
 ### Dependencies
 
-- **ImageResize.Core**: NuGet package (v2.0.0) for image processing
-- **SkiaSharp**: High-performance image codec
-- **Microsoft.Extensions.DependencyInjection**: Service container
-- **Microsoft.Extensions.Logging**: Logging infrastructure
-- **.NET 9.0 Desktop Runtime**: Required for WPF
+- **ImageResize.Core**: image processing engine (project reference)
+- **Avalonia UI 11.2.x**: cross-platform XAML UI toolkit
+- **SkiaSharp**: high-performance image codec (pulled in by Core)
+- **MessageBox.Avalonia**: standard dialog primitives
+- **Microsoft.Extensions.DependencyInjection / Logging**: service container + logging
+- **.NET 10 runtime**: self-contained in Mac builds; required system-wide on Windows
 
 ### Registry Entries
 
