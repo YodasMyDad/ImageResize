@@ -11,8 +11,8 @@ A minimal, cross-platform image resize middleware for .NET Core that provides a 
 ### ImageResize.Core (NuGet Package)
 ASP.NET Core middleware for on-the-fly image resizing with disk caching.
 
-### ImageResize.ContextMenu (Windows Application)
-Windows 11 context menu integration for quick image resizing. Right-click any image file and select "Resize Images..." to quickly resize single or multiple images. [See ImageResize.ContextMenu/README.md](ImageResize.ContextMenu/README.md) for installation instructions.
+### ImageResize.ContextMenu (Desktop Application — Windows & macOS)
+Cross-platform desktop shell integration for quick image resizing. On Windows 11, right-click any image file and select "Resize Images..."; on macOS, right-click in Finder and choose Services → Resize Images. Single or multiple images, percentage or exact dimensions. [See ImageResize.ContextMenu/README.md](ImageResize.ContextMenu/README.md) for install instructions on both platforms.
 
 ## Features
 
