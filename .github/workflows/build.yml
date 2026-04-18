@@ -1,8 +1,6 @@
 name: build
 
 on:
-  push:
-    branches: [master, main]
   pull_request:
     branches: [master, main]
   workflow_dispatch:
@@ -50,15 +48,6 @@ jobs:
         with:
           name: test-results-${{ matrix.os }}
           path: '**/TestResults/*.trx'
-
-      - name: Upload NuGet packages
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: nupkgs
-          path: |
-            nupkgs/*.nupkg
-            nupkgs/*.snupkg
 
   context-menu:
     name: ContextMenu (windows)

@@ -1,25 +1,34 @@
 name: release
 
-# Fires when you push a tag matching v*.*.* (e.g. v3.1.0).
-# Produces:
-#   - ImageResize.<ver>.nupkg + .snupkg published to nuget.org
-#   - ImageResize-ContextMenu-Setup-<ver>-x64.exe and -x86.exe attached to a GitHub Release
+# Fires on every push to master.
+# On each run:
+#   - Bumps the minor version in Directory.Build.props (e.g. 3.1.0 -> 3.2.0)
+#   - Builds + tests + packs ImageResize.Core (.nupkg + .snupkg)
+#   - Builds the ContextMenu installers (x64 + x86)
+#   - Pushes the package to nuget.org
+#   - Creates a v{version} tag and a GitHub Release with the installers attached
+#   - Commits the bumped Directory.Build.props back to master with [skip ci]
 #
-# Prerequisites (one-time, done in the GitHub UI):
-#   1. Repo → Settings → Secrets and variables → Actions → New repository secret
+# Major-version bumps are still manual: edit <Version> in Directory.Build.props
+# (e.g. 3.x.0 -> 4.0.0). The workflow only ever touches the minor.
+#
+# Prerequisites (one-time, in the GitHub UI):
+#   1. Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
 #        Name:  NUGET_API_KEY
 #        Value: <API key from nuget.org, scoped to push ImageResize*>
-#   2. Nothing else — the workflow grants itself `contents: write` below, so it can
-#      create the release without changing your repo-wide Actions permissions.
+#   2. Repo -> Settings -> Actions -> General -> Workflow permissions
+#        "Read and write permissions" must be enabled (so the workflow can push
+#        the version-bump commit and create tags/releases).
+#   3. master must NOT have a branch-protection rule that blocks direct pushes
+#      from GITHUB_TOKEN, otherwise the bump-back commit will fail.
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [master]
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Build everything but skip nuget.org push and release creation'
+        description: 'Build everything but skip nuget.org push, GitHub Release, and version commit-back'
         type: boolean
         default: false
 
@@ -30,6 +39,8 @@ jobs:
   build-library:
     name: Build + test + pack (Core)
     runs-on: ubuntu-latest
+    # Skip when the head commit is the workflow's own version-bump commit.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') && github.actor != 'github-actions[bot]' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -41,28 +52,32 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Resolve version
+      - name: Bump minor version
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -1)
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: $VERSION"
+          set -euo pipefail
+          PROPS=Directory.Build.props
+          CURRENT=$(grep -oP '(?<=<Version>)[^<]+' "$PROPS" | head -1)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW_MINOR=$((MINOR + 1))
+          NEW_VERSION="${MAJOR}.${NEW_MINOR}.0"
+          NEW_ASSEMBLY="${NEW_VERSION}.0"
+          echo "Current version: $CURRENT"
+          echo "New version:     $NEW_VERSION"
+          sed -i "s|<Version>${CURRENT}</Version>|<Version>${NEW_VERSION}</Version>|" "$PROPS"
+          sed -i "s|<AssemblyVersion>${CURRENT}.0</AssemblyVersion>|<AssemblyVersion>${NEW_ASSEMBLY}</AssemblyVersion>|" "$PROPS"
+          sed -i "s|<FileVersion>${CURRENT}.0</FileVersion>|<FileVersion>${NEW_ASSEMBLY}</FileVersion>|" "$PROPS"
+          sed -i "s|<InformationalVersion>${CURRENT}</InformationalVersion>|<InformationalVersion>${NEW_VERSION}</InformationalVersion>|" "$PROPS"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "--- Directory.Build.props after bump ---"
+          cat "$PROPS"
 
-      - name: Verify tag version matches Directory.Build.props
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PROP_VERSION=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -1)
-          if [[ "$TAG_VERSION" != "$PROP_VERSION" ]]; then
-            echo "::error::Tag v$TAG_VERSION does not match <Version>$PROP_VERSION</Version> in Directory.Build.props"
-            exit 1
-          fi
+      - name: Upload bumped props
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumped-props
+          path: Directory.Build.props
 
       - name: Build Core
         run: dotnet build ImageResize.Core/ImageResize.Core.csproj -c Release
@@ -96,6 +111,12 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Restore bumped Directory.Build.props
+        uses: actions/download-artifact@v4
+        with:
+          name: bumped-props
+          path: .
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
@@ -113,8 +134,13 @@ jobs:
     name: Publish to nuget.org + GitHub Release
     runs-on: ubuntu-latest
     needs: [build-library, build-installer]
-    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    if: ${{ inputs.dry_run != true }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/download-artifact@v4
         with:
           name: nupkgs
@@ -124,6 +150,11 @@ jobs:
         with:
           name: installers
           path: release/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bumped-props
+          path: .
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -143,9 +174,23 @@ jobs:
       - name: List release assets
         run: ls -la release/
 
+      - name: Commit + tag bumped version
+        env:
+          VERSION: ${{ needs.build-library.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Directory.Build.props
+          git commit -m "Release v${VERSION} [skip ci]"
+          git tag "v${VERSION}"
+          git push origin master --follow-tags
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.build-library.outputs.version }}
+          name: v${{ needs.build-library.outputs.version }}
           files: |
             release/ImageResize.*.nupkg
             release/ImageResize.*.snupkg
