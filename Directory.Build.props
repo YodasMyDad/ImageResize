@@ -9,10 +9,10 @@
     </PropertyGroup>
 
     <PropertyGroup Label="Version">
-        <Version>3.3.0</Version>
-        <AssemblyVersion>3.3.0.0</AssemblyVersion>
-        <FileVersion>3.3.0.0</FileVersion>
-        <InformationalVersion>3.3.0</InformationalVersion>
+        <Version>3.4.0</Version>
+        <AssemblyVersion>3.4.0.0</AssemblyVersion>
+        <FileVersion>3.4.0.0</FileVersion>
+        <InformationalVersion>3.4.0</InformationalVersion>
     </PropertyGroup>
 
     <PropertyGroup Label="Authorship">
