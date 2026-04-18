@@ -55,7 +55,7 @@ public partial class App : Application
 
         var mainWindow = Services.GetRequiredService<MainWindow>();
         var startupArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
-        SafeLog($"Primary instance. Startup args: {startupArgs.Length}. First='{startupArgs.FirstOrDefault()}'");
+        LogStartupArgs("Primary instance", startupArgs);
         mainWindow.Show();
     }
 
@@ -103,9 +103,28 @@ public partial class App : Application
     private static void SafeLog(Exception ex, string context)
         => SafeLog($"{context}: {ex.GetType().Name}: {ex.Message}");
 
+    private static void LogStartupArgs(string label, string[] args)
+    {
+        string cwd;
+        try { cwd = Environment.CurrentDirectory; }
+        catch (Exception ex) { cwd = $"<error: {ex.GetType().Name}>"; }
+
+        SafeLog($"{label}. argc={args.Length} cwd='{cwd}'");
+        for (var i = 0; i < args.Length; i++)
+        {
+            var a = args[i];
+            bool exists;
+            try { exists = !string.IsNullOrWhiteSpace(a) && File.Exists(a); }
+            catch (Exception) { exists = false; }
+            var ext = string.Empty;
+            try { ext = Path.GetExtension(a ?? string.Empty); } catch (ArgumentException) { }
+            SafeLog($"  arg[{i}] len={(a?.Length ?? 0)} exists={exists} ext='{ext}' value='{a}'");
+        }
+    }
+
     private static void ForwardArgsToRunningInstance(string[] args)
     {
-        SafeLog($"Secondary instance. Forwarding {args.Length} arg(s). First='{args.FirstOrDefault()}'");
+        LogStartupArgs("Secondary instance forwarding", args);
         if (args.Length == 0)
             return;
 

@@ -1,6 +1,7 @@
 using System.Collections;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
@@ -46,10 +47,16 @@ public partial class MainWindow : Window
 
             var initial = (args ?? [])
                 .Skip(1)
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .Where(File.Exists)
+                .Select(TryResolveArg)
+                .Where(p => !string.IsNullOrEmpty(p))
                 .Where(IsImageFile)
                 .ToList();
+
+            // No command-line args means Windows didn't pass the selection (typical for Desktop
+            // shell-verb invocations). Try the Desktop listview first — a stale selection in a
+            // background Explorer window would otherwise hijack the result.
+            if (initial.Count == 0)
+                initial = GetSelectedDesktopImagePaths();
 
             if (initial.Count == 0)
                 initial = GetSelectedExplorerImagePaths();
@@ -107,6 +114,63 @@ public partial class MainWindow : Window
         }
     }
 
+    // Resolves an incoming argument to a full file path that exists, or "" if it can't be found.
+    // Shell-verb launches sometimes hand us bare filenames or paths rooted at the wrong Desktop
+    // when OneDrive redirection is in play.
+    private static string TryResolveArg(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        var arg = raw.Trim().Trim('"');
+        if (arg.Length == 0) return string.Empty;
+
+        if (File.Exists(arg)) return arg;
+
+        try
+        {
+            var full = Path.GetFullPath(arg);
+            if (File.Exists(full)) return full;
+        }
+        catch (ArgumentException) { }
+        catch (PathTooLongException) { }
+        catch (NotSupportedException) { }
+
+        foreach (var root in EnumerateDesktopRoots())
+        {
+            try
+            {
+                var combined = Path.GetFullPath(arg, root);
+                if (File.Exists(combined)) return combined;
+            }
+            catch (ArgumentException) { }
+            catch (PathTooLongException) { }
+            catch (NotSupportedException) { }
+        }
+
+        return string.Empty;
+    }
+
+    private static IEnumerable<string> EnumerateDesktopRoots()
+    {
+        var known = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        if (!string.IsNullOrEmpty(known)) yield return known;
+
+        var oneDrive = Environment.GetEnvironmentVariable("OneDrive");
+        if (!string.IsNullOrEmpty(oneDrive))
+        {
+            var oneDriveDesktop = Path.Combine(oneDrive, "Desktop");
+            if (!string.Equals(oneDriveDesktop, known, StringComparison.OrdinalIgnoreCase))
+                yield return oneDriveDesktop;
+        }
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(profile))
+        {
+            var profileDesktop = Path.Combine(profile, "Desktop");
+            if (!string.Equals(profileDesktop, known, StringComparison.OrdinalIgnoreCase))
+                yield return profileDesktop;
+        }
+    }
+
     private static List<string> GetSelectedExplorerImagePaths()
     {
         var results = new List<string>();
@@ -158,6 +222,223 @@ public partial class MainWindow : Window
         return results.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    // Reads the Windows Desktop's current selection by talking to the Progman/WorkerW SysListView32
+    // directly. Needed because Shell.Application.Windows() does not expose the Desktop, and Windows
+    // does not pass %* command-line args to shell verbs invoked from the Desktop.
+    private static List<string> GetSelectedDesktopImagePaths()
+    {
+        var results = new List<string>();
+
+        var hListView = FindDesktopListView();
+        if (hListView == IntPtr.Zero) return results;
+
+        int count = (int)SendMessage(hListView, LVM_GETSELECTEDCOUNT, IntPtr.Zero, IntPtr.Zero);
+        if (count <= 0) return results;
+
+        _ = GetWindowThreadProcessId(hListView, out var pid);
+        if (pid == 0) return results;
+
+        var hProcess = OpenProcess(
+            PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+            false, pid);
+        if (hProcess == IntPtr.Zero) return results;
+
+        IntPtr remoteItem = IntPtr.Zero;
+        IntPtr remoteText = IntPtr.Zero;
+        const int textBytes = 520 * sizeof(char);
+        var itemBytes = Marshal.SizeOf<LVITEMW>();
+
+        try
+        {
+            remoteItem = VirtualAllocEx(hProcess, IntPtr.Zero, (IntPtr)itemBytes, MEM_COMMIT, PAGE_READWRITE);
+            remoteText = VirtualAllocEx(hProcess, IntPtr.Zero, (IntPtr)textBytes, MEM_COMMIT, PAGE_READWRITE);
+            if (remoteItem == IntPtr.Zero || remoteText == IntPtr.Zero) return results;
+
+            var desktopRoots = EnumerateDesktopRoots().ToList();
+            var buffer = new byte[textBytes];
+            var index = -1;
+            while (true)
+            {
+                index = (int)SendMessage(hListView, LVM_GETNEXTITEM, (IntPtr)index, (IntPtr)LVNI_SELECTED);
+                if (index < 0) break;
+
+                var lvItem = new LVITEMW
+                {
+                    mask = LVIF_TEXT,
+                    iItem = index,
+                    iSubItem = 0,
+                    pszText = remoteText,
+                    cchTextMax = textBytes / sizeof(char)
+                };
+
+                if (!WriteProcessMemory(hProcess, remoteItem, ref lvItem, (IntPtr)itemBytes, out _))
+                    continue;
+
+                _ = SendMessage(hListView, LVM_GETITEMTEXTW, (IntPtr)index, remoteItem);
+
+                if (!ReadProcessMemory(hProcess, remoteText, buffer, (IntPtr)textBytes, out _))
+                    continue;
+
+                var name = Encoding.Unicode.GetString(buffer);
+                var nul = name.IndexOf('\0');
+                if (nul >= 0) name = name[..nul];
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                var resolved = ResolveDesktopItem(name, desktopRoots);
+                if (!string.IsNullOrEmpty(resolved) && IsImageFile(resolved))
+                    results.Add(resolved);
+            }
+        }
+        finally
+        {
+            if (remoteItem != IntPtr.Zero) VirtualFreeEx(hProcess, remoteItem, IntPtr.Zero, MEM_RELEASE);
+            if (remoteText != IntPtr.Zero) VirtualFreeEx(hProcess, remoteText, IntPtr.Zero, MEM_RELEASE);
+            CloseHandle(hProcess);
+        }
+
+        return results.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string ResolveDesktopItem(string name, IReadOnlyList<string> roots)
+    {
+        foreach (var root in roots)
+        {
+            if (string.IsNullOrEmpty(root)) continue;
+
+            var direct = Path.Combine(root, name);
+            if (File.Exists(direct)) return direct;
+
+            // "Hide extensions of known file types" is on — try known image extensions.
+            if (string.IsNullOrEmpty(Path.GetExtension(name)))
+            {
+                foreach (var ext in ImageExtensions)
+                {
+                    var candidate = Path.Combine(root, name + ext);
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+        }
+        return string.Empty;
+    }
+
+    private static IntPtr FindDesktopListView()
+    {
+        // Classic path: Progman > SHELLDLL_DefView > SysListView32
+        var hProgman = FindWindow("Progman", null);
+        if (hProgman != IntPtr.Zero)
+        {
+            var hDef = FindWindowEx(hProgman, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (hDef != IntPtr.Zero)
+            {
+                var hList = FindWindowEx(hDef, IntPtr.Zero, "SysListView32", null);
+                if (hList != IntPtr.Zero) return hList;
+            }
+        }
+
+        // Wallpaper slideshow / some Win10+ configs reparent SHELLDLL_DefView into a WorkerW
+        // sibling of Progman. Enumerate top-level WorkerW windows and probe each.
+        IntPtr found = IntPtr.Zero;
+        var classBuf = new char[32];
+        EnumWindows((hWnd, _) =>
+        {
+            var len = GetClassName(hWnd, classBuf, classBuf.Length);
+            if (len == 0) return true;
+            if (!new ReadOnlySpan<char>(classBuf, 0, len).SequenceEqual("WorkerW")) return true;
+
+            var hDef = FindWindowEx(hWnd, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (hDef == IntPtr.Zero) return true;
+
+            var hList = FindWindowEx(hDef, IntPtr.Zero, "SysListView32", null);
+            if (hList == IntPtr.Zero) return true;
+
+            found = hList;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    #region Win32 interop for Desktop selection
+
+    private const uint PROCESS_VM_OPERATION = 0x0008;
+    private const uint PROCESS_VM_READ = 0x0010;
+    private const uint PROCESS_VM_WRITE = 0x0020;
+    private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+
+    private const uint MEM_COMMIT = 0x1000;
+    private const uint MEM_RELEASE = 0x8000;
+    private const uint PAGE_READWRITE = 0x04;
+
+    private const int LVM_FIRST = 0x1000;
+    private const int LVM_GETSELECTEDCOUNT = LVM_FIRST + 50;
+    private const int LVM_GETNEXTITEM = LVM_FIRST + 12;
+    private const int LVM_GETITEMTEXTW = LVM_FIRST + 115;
+    private const int LVIF_TEXT = 0x0001;
+    private const int LVNI_SELECTED = 0x0002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LVITEMW
+    {
+        public uint mask;
+        public int iItem;
+        public int iSubItem;
+        public uint state;
+        public uint stateMask;
+        public IntPtr pszText;
+        public int cchTextMax;
+        public int iImage;
+        public IntPtr lParam;
+        public int iIndent;
+        public int iGroupId;
+        public uint cColumns;
+        public IntPtr puColumns;
+        public IntPtr piColFmt;
+        public int iGroup;
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr hWndParent, IntPtr hWndChildAfter, string? lpszClass, string? lpszWindow);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")]
+    private static extern int GetClassName(IntPtr hWnd, [Out] char[] lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint flAllocationType, uint flProtect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint dwFreeType);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, ref LVITEMW lpBuffer, IntPtr nSize, out IntPtr lpNumberOfBytesWritten);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, [Out] byte[] lpBuffer, IntPtr nSize, out IntPtr lpNumberOfBytesRead);
+
+    #endregion
+
     private void ConfigureUiForMode()
     {
         if (_isMultipleImages)
@@ -181,7 +462,8 @@ public partial class MainWindow : Window
         if (_resizeInProgress) return;
 
         var toAdd = files
-            .Where(File.Exists)
+            .Select(TryResolveArg)
+            .Where(p => !string.IsNullOrEmpty(p))
             .Where(IsImageFile)
             .ToList();
 
