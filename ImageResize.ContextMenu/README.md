@@ -30,6 +30,16 @@ Windows 11 context menu integration for quick image resizing. Right-click any im
 # Then run: publish\installer\ImageResize-ContextMenu-Setup-1.0.0.exe
 ```
 
+### First install: SmartScreen warning
+
+On first run you'll likely see a **"Windows protected your PC — Unknown publisher"** dialog. This is because the installer isn't yet Authenticode-signed (code signing is on the roadmap). The installer is safe to run; SmartScreen flags any unsigned installer from a publisher it doesn't recognise.
+
+To proceed, use any of:
+
+- Click **More info** → **Run anyway** in the SmartScreen dialog.
+- Right-click the downloaded `.exe` → **Properties** → tick **Unblock** → **OK**, then double-click.
+- In PowerShell, before running: `Unblock-File -Path .\ImageResize-ContextMenu-Setup-*.exe`
+
 ### Usage
 
 **Single Image:**

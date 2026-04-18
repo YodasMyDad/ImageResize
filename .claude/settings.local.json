@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Bash(mkdir -p \"C:/Projects/ImageResize/.claude/tmp-icon-work\")",
+      "Bash(magick \"C:/Projects/ImageResize/ImageResize.ContextMenu/Assets/icon.ico[8]\" \"C:/Projects/ImageResize/.claude/tmp-icon-work/existing-256.png\")",
+      "Bash(rm -rf \"C:/Projects/ImageResize/.claude/tmp-icon-work\")",
+      "Bash(magick identify *)"
+    ]
+  }
+}

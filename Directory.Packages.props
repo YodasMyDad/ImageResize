@@ -23,6 +23,14 @@
         <PackageVersion Include="System.IO.Hashing" Version="10.0.6" />
     </ItemGroup>
 
+    <ItemGroup Label="Avalonia (ContextMenu desktop UI)">
+        <PackageVersion Include="Avalonia" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Desktop" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Fonts.Inter" Version="11.2.5" />
+        <PackageVersion Include="Avalonia.Diagnostics" Version="11.2.5" />
+    </ItemGroup>
+
     <ItemGroup Label="SourceLink">
         <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
     </ItemGroup>
