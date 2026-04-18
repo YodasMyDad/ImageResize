@@ -40,14 +40,7 @@ jobs:
         run: dotnet build ImageResize.Example/ImageResize.Example.csproj -c Release --no-restore
 
       - name: Test
-        run: dotnet test ImageResize.Tests/ImageResize.Tests.csproj -c Release --no-build --logger "trx;LogFileName=test-results.trx"
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.os }}
-          path: '**/TestResults/*.trx'
+        run: dotnet test ImageResize.Tests/ImageResize.Tests.csproj -c Release
 
   context-menu:
     name: ContextMenu (windows)
